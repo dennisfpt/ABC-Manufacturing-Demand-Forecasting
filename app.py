@@ -18,7 +18,7 @@ st.set_page_config(page_title="ABC Manufacturing - Demand Forecasting", layout="
 
 st.title("🏭 ABC Manufacturing — Demand Forecasting Solution")
 st.markdown("### *Hệ thống Phân tích & Dự báo Nhu cầu Sản xuất dành cho Giám đốc Vận hành*")
-st.divider()
+st.hr()
 
 # ─── Cấu hình Giao diện Biểu đồ ───────────────────────────────────────────────
 PALETTE   = ["#2563EB", "#10B981", "#F59E0B", "#EF4444", "#8B5CF6"]
