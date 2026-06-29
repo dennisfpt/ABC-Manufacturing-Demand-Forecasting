@@ -3,7 +3,7 @@
  ABC MANUFACTURING — DEMAND FORECASTING WEB SOLUTION
  Data Science Case Study | Operation Director Support
  Author  : Junior Analyst, ABC Manufacturing
- Version : 2.5 (Excel .xlsx Native Integration)
+ Version : 2.6 (Fixed SARIMA Indexing Version)
 ============================================================
 """
 
@@ -58,11 +58,10 @@ def run_data_science_pipeline():
     if not os.path.exists(DATA_FILENAME):
         return None
         
-    # Đọc trực tiếp file Excel cấu trúc .xlsx bằng engine openpyxl
+    # Đọc trực tiếp file Excel cấu trúc .xlsx
     try:
         df_raw = pd.read_excel(DATA_FILENAME, engine='openpyxl')
     except Exception:
-        # Dự phòng nếu môi trường GitHub của bạn chưa nhận diện đúng định dạng
         df_raw = pd.read_excel(DATA_FILENAME)
         
     df = df_raw.copy()
@@ -72,13 +71,11 @@ def run_data_science_pipeline():
     def clean_excel_date_glitch(val, default_numeric_val):
         if pd.isna(val): 
             return default_numeric_val
-        # Nếu ô bị biến thành đối tượng ngày tháng (Timestamp)
         if isinstance(val, (pd.Timestamp, datetime.date)) or hasattr(val, 'day'):
             try: 
                 return float(val.day) + float(val.month) / 10.0
             except: 
                 return default_numeric_val
-        # Nếu ô ở dạng chuỗi văn bản chứa dấu gạch ngang (VD: "2026-01-02")
         val_str = str(val).strip()
         if "-" in val_str:
             try:
@@ -91,7 +88,7 @@ def run_data_science_pipeline():
         except: 
             return default_numeric_val
 
-    # Áp dụng hàm làm sạch cho hai cột bị lỗi định dạng trên file Excel thực tế
+    # Áp dụng hàm làm sạch cho dữ liệu cảm biến
     df["Độ_Rung_mm_s"] = df["Độ_Rung_mm_s"].apply(lambda x: clean_excel_date_glitch(x, 2.5))
     df["Điện_Năng_kWh"] = df["Điện_Năng_kWh"].apply(lambda x: clean_excel_date_glitch(x, 12.0))
     df["Nhiệt_Độ_C"] = pd.to_numeric(df["Nhiệt_Độ_C"], errors='coerce').fillna(df["Nhiệt_Độ_C"].median())
@@ -100,7 +97,7 @@ def run_data_science_pipeline():
     df["month"]   = df["Ngày_Kiểm_Tra"].dt.month
     df["quarter"] = df["Ngày_Kiểm_Tra"].dt.quarter
 
-    # Tìm kiếm các điểm dị biệt (Outliers) bằng phương pháp IQR phục vụ báo cáo giám đốc
+    # Tìm kiếm các điểm dị biệt (Outliers) phục vụ báo cáo giám đốc
     q1, q3 = df["Nhiệt_Độ_C"].quantile(0.25), df["Nhiệt_Độ_C"].quantile(0.75)
     iqr = q3 - q1
     df["is_outlier"] = ~df["Nhiệt_Độ_C"].between(q1 - 1.5 * iqr, q3 + 1.5 * iqr)
@@ -135,10 +132,16 @@ def run_data_science_pipeline():
     baseline_pred = target_series.shift(1).rolling(2, min_periods=1).mean().reindex(y_test.index)
     results["Baseline (MA-3)"] = {"preds": baseline_pred, "MAE": mean_absolute_error(y_test, baseline_pred), "R2": r2_score(y_test, baseline_pred)}
     
-    # Mô hình 2: SARIMA Model
-    train_ts = target_series.iloc[: SPLIT + len(feat_df) - len(target_series) + 3]
-    sarima_model = SARIMAX(train_ts, order=(1,1,1), seasonal_order=(0,0,0,0), enforce_stationarity=False, enforce_invertibility=False).fit(disp=False)
-    sarima_pred = sarima_model.predict(start=y_test.index[0], end=y_test.index[-1])
+    # Mô hình 2: SARIMA Model (Reset chỉ mục để tránh lỗi KeyError)
+    train_ts_reset = y_train.reset_index(drop=True)
+    sarima_model = SARIMAX(train_ts_reset, order=(1,1,1), seasonal_order=(0,0,0,0), enforce_stationarity=False, enforce_invertibility=False).fit(disp=False)
+    
+    # Dự báo dựa trên vị trí số nguyên tương ứng với chiều dài tập test
+    start_idx = len(train_ts_reset)
+    end_idx = start_idx + len(y_test) - 1
+    sarima_pred_values = sarima_model.predict(start=start_idx, end=end_idx)
+    sarima_pred = pd.Series(sarima_pred_values.values, index=y_test.index)
+    
     results["SARIMA Model"] = {"preds": sarima_pred, "MAE": mean_absolute_error(y_test, sarima_pred), "R2": r2_score(y_test, sarima_pred)}
     
     # Mô hình 3: Machine Learning XGBoost Regressor
@@ -216,7 +219,7 @@ else:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # PHÂN TÁCH GIAO DIỆN THÀNH CÁC TAB CHUYÊN CHÚNG
+    # PHÂN TÁCH GIAO DIỆN THÀNH CÁC TAB
     tab_eda, tab_model, tab_report = st.tabs([
         "📊 Phân Tích Thống Kê Khám Phá (Section 4)", 
         "🤖 Kiểm Định Mô Hình Học Máy (Section 6-8)", 
@@ -273,7 +276,6 @@ else:
                     "Hệ số xác định R²": round(res["R2"], 2)
                 })
             st.dataframe(pd.DataFrame(eval_rows), use_container_width=True, hide_index=True)
-            st.caption("ℹ️ Hệ số R² càng tiệm cận 1.00 thể hiện thuật toán khớp mẫu chuỗi thời gian càng hoàn hảo.")
             
         with col_m2:
             st.markdown("#### 🔮 Kết quả Dự báo Xu hướng 3 Ngày Kế tiếp")
