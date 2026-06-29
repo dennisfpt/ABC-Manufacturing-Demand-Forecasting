@@ -179,9 +179,6 @@ tab1, tab2, tab3 = st.tabs(["📊 Tổng quan & Phân tích (EDA)", "🔮 Huấn
 with tab1:
     st.subheader("📊 Phân tích Khám phá Dữ liệu (EDA Dashboard)")
     n_outliers = df["is_outlier"].sum()
-
-    df_filtered_tab1 = df[(df["product"] == selected_product) & (df["region"] == selected_region)]
-    n_outliers_filtered = df_filtered_tab1["is_outlier"].sum()
     
     col1, col2, col3 = st.columns(3)
     col1.metric("Tổng sản lượng đã bán toàn hệ thống", f"{df['units_sold'].sum():,}")
