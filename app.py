@@ -24,7 +24,7 @@ sns.set_theme(style="whitegrid", font_scale=1.0)
 plt.rcParams['font.family'] = 'sans-serif'
 plt.rcParams['figure.facecolor'] = '#F8FAFC'
 
-DATA_FILENAME = "ABC_Manufacturing_IoT_Simulation_Data.xlxs"
+DATA_FILENAME = "ABC_Manufacturing_IoT_Simulation_Data.xlsx"
 
 # 2. DATA SCIENCE PIPELINE TRUY XUẤT NGẦM (SỬ DỤNG CACHE)
 @st.cache_resource
