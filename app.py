@@ -33,7 +33,7 @@ def load_and_train_pipeline():
         return None, None, None, None, None, None, None, None
     
     # Đọc dữ liệu cảm biến gốc từ tệp tin
-    df = pd.read_csv(DATA_FILENAME)
+    df = pd.read_excel(DATA_FILENAME)
     
     # Ép kiểu dữ liệu thời gian theo tên cột thực tế (Timestamp / Ngày_Kiểm_Tra)
     time_col = "Timestamp" if "Timestamp" in df.columns else "Ngày_Kiểm_Tra"
