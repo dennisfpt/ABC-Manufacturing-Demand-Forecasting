@@ -1,5 +1,3 @@
-
-
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -14,7 +12,9 @@ import xgboost as xgb
 # ── Page Config ────────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="Demand Forecasting",
-    page_icon="🏭", layout="wide", initial_sidebar_state="expanded",
+    page_icon="🏭", 
+    layout="wide", 
+    initial_sidebar_state="expanded",
 )
 
 st.markdown("""
@@ -69,14 +69,14 @@ def train_xgb(vals, idx):
     y_test  = feat.iloc[SPLIT:]["y"]
 
     model = xgb.XGBRegressor(n_estimators=300, learning_rate=0.05,
-                              max_depth=4, random_state=42, verbosity=0)
+                             max_depth=4, random_state=42, verbosity=0)
     model.fit(X_train, y_train, eval_set=[(X_test, y_test)], verbose=False)
     xgb_pred = pd.Series(model.predict(X_test), index=y_test.index)
     baseline  = series.shift(1).rolling(3).mean().reindex(y_test.index)
 
     results = {
         "Baseline MA-3": {"preds": baseline, "color": "#94A3B8"},
-        "XGBoost":       {"preds": xgb_pred,  "color": "#F59E0B"},
+        "XGBoost":        {"preds": xgb_pred,  "color": "#F59E0B"},
     }
     for r in results.values():
         r["MAE"]  = round(mean_absolute_error(y_test, r["preds"]), 1)
@@ -300,8 +300,8 @@ for rec in recs:
 st.markdown("</div>", unsafe_allow_html=True)
 
 # ── Footer ────────────────────────────────────────────────────────────────────
+# ── Footer ────────────────────────────────────────────────────────────────────
 st.markdown("---")
 st.markdown("<p style='text-align:center;color:#94A3B8;font-size:12px'>"
-    "ABC Manufacturing © 2024 &nbsp;|&nbsp; Kaggle Consumer Electronics Dataset "
-    "&nbsp;|&nbsp; Unit 17 ASM 2 &nbsp;|&nbsp; Junior Analyst</p>",
+    "© 2026 Samsung Electronics Analytics</p>",
     unsafe_allow_html=True)
