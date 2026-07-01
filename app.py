@@ -129,7 +129,7 @@ CAT_CLR    = {"Smartphones":"#2563EB","Laptops":"#10B981",
 
 # ── Sidebar ────────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown("## 🏭 ABC Manufacturing")
+    st.markdown("## Modul analyst")
     st.markdown("**Consumer Electronics Analytics**")
     st.markdown("---")
     sel_cat   = st.selectbox("Product Category", CATS)
@@ -137,16 +137,16 @@ with st.sidebar:
     st.markdown("---")
     st.markdown(f"**Source:** Kaggle Consumer Electronics  \n**Total rows:** {len(df_all):,}  \n**Samsung rows:** {len(df_samsung):,}")
     st.markdown("---")
-    st.markdown("**Unit 17 — ASM 2** | Junior Analyst")
+    st.markdown("**Samsung Electronics** | Junior Analyst")
 
 # ── Header ────────────────────────────────────────────────────────────────────
 st.markdown("""
 <div style='background:linear-gradient(90deg,#1E3A5F,#2563EB);border-radius:12px;
     padding:22px 28px;margin-bottom:20px;color:white'>
-<h2 style='margin:0;font-size:22px'>🏭 ABC Manufacturing — Demand Forecasting Dashboard</h2>
+<h2 style='margin:0;font-size:22px'>🏭 Demand Forecasting Dashboard</h2>
 <p style='margin:5px 0 0;opacity:.8;font-size:13px'>
-Data Source: Consumer Electronics Sales Dataset (Kaggle) &nbsp;|&nbsp;
-Samsung Electronics Analytics &nbsp;|&nbsp; Unit 17 ASM 2</p>
+ Consumer Electronics Sales Dataset &nbsp;|&nbsp;
+Samsung Electronics Analytics &nbsp;|&nbsp; Samsung </p>
 </div>
 """, unsafe_allow_html=True)
 
