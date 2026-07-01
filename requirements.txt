@@ -1,9 +1,6 @@
-streamlit
 numpy
 pandas
-matplotlib
-seaborn
+plotly
 scikit-learn
-statsmodels
 xgboost
-openpyxl
+streamlit
