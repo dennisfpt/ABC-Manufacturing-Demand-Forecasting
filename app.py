@@ -1,8 +1,4 @@
-"""
-ABC Manufacturing — Demand Forecasting Dashboard
-Dữ liệu thực: Consumer Electronics Sales Dataset (Kaggle)
-Streamlit Web App | Unit 17 ASM 2
-"""
+
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -17,7 +13,7 @@ import xgboost as xgb
 
 # ── Page Config ────────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="ABC Manufacturing — Demand Forecasting",
+    page_title="Demand Forecasting",
     page_icon="🏭", layout="wide", initial_sidebar_state="expanded",
 )
 
