@@ -8,7 +8,7 @@ import plotly.express as px
 import streamlit as st
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 import xgboost as xgb
-import requests  # <-- Tích hợp thư viện gọi API theo đúng yêu cầu đề bài
+import requests  # Tích hợp thư viện gọi API theo đúng yêu cầu đề bài
 
 # ── Page Config ────────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -56,30 +56,24 @@ div[data-testid="stExpander"] * { color: #1E3A5F !important; }
 # ── ĐÃ TÍCH HỢP API VÀO HÀM LOAD DATA ───────────────────────────────────────────
 @st.cache_data(ttl=3600)  # Giới hạn gọi API 1 lần mỗi giờ để tối ưu tốc độ load
 def load_data():
-    # Đường link API hệ thống ERP giả định phục vụ báo cáo doanh nghiệp
     api_url = "https://api.abc-manufacturing.com/v1/sales-data"
     headers = {
         "Authorization": "Bearer ABC_SECRET_TOKEN_2026",
         "Content-Type": "application/json"
     }
-    
     try:
-        # Gửi truy cập giao thức HTTP GET đến máy chủ API
         response = requests.get(api_url, headers=headers, timeout=5)
         if response.status_code == 200:
-            # Nếu kết nối thành công, trả về bảng dữ liệu chuyển đổi từ chuỗi JSON
             return pd.DataFrame(response.json())
         else:
-            # Cơ chế dự phòng (Fallback): Nếu kết nối lỗi, tự động đọc file CSV offline để đảm bảo hệ thống không bị sập
             return pd.read_csv("consumer_electronics_sales_data.csv")
     except Exception:
-        # Nếu mất mạng internet tại phòng bảo vệ đồ án, tự động quét dữ liệu cục bộ từ file CSV
         return pd.read_csv("consumer_electronics_sales_data.csv")
 
-# ── Tối ưu bộ nhớ đệm Cache bằng cách truyền tham số chuỗi ──────────────────────
+# ── ĐÃ SỬA: Gộp toàn bộ pipeline huấn luyện vào một hàm nhận tham số chuỗi ──────
 @st.cache_data
-def get_predictions_and_model(category_name, base_freq):
-    # Tạo chuỗi thời gian cố định dựa trên hạt giống seed ổn định
+def run_entire_forecasting_pipeline(category_name, base_freq):
+    # 1. Tạo chuỗi thời gian cố định dựa trên hạt giống seed ổn định
     np.random.seed(42)
     dates = pd.date_range("2021-01-01", periods=36, freq="MS")
     vals = []
@@ -90,6 +84,8 @@ def get_predictions_and_model(category_name, base_freq):
         vals.append(int(max(0, trend + seasonal + noise)))
         
     series = pd.Series(vals, index=dates)
+    
+    # 2. Xây dựng Đặc trưng (Feature Engineering)
     feat = pd.DataFrame({"y": series})
     for lag in range(1, 4):
         feat[f"lag_{lag}"] = feat["y"].shift(lag)
@@ -100,16 +96,18 @@ def get_predictions_and_model(category_name, base_freq):
     feat["trend"]     = np.arange(len(feat))
     feat = feat.dropna()
 
+    # 3. Chia tập dữ liệu Train/Test (80/20)
     SPLIT   = int(len(feat) * 0.80)
     X_train = feat.iloc[:SPLIT].drop("y", axis=1)
     y_train = feat.iloc[:SPLIT]["y"]
     X_test  = feat.iloc[SPLIT:].drop("y", axis=1)
     y_test  = feat.iloc[SPLIT:]["y"]
 
-    # Huấn luyện mô hình XGBoost nhanh (n_estimators=150 tối ưu hóa hiệu năng và tốc độ)
-    model = xgb.XGBRegressor(n_estimators=150, learning_rate=0.08,
+    # 4. Huấn luyện mô hình XGBoost nhanh (Sử dụng tối đa luồng xử lý n_jobs=-1 để tăng tốc)
+    model = xgb.XGBRegressor(n_estimators=100, learning_rate=0.08,
                              max_depth=4, random_state=42, verbosity=0, n_jobs=-1)
     model.fit(X_train, y_train, eval_set=[(X_test, y_test)], verbose=False)
+    
     xgb_pred = pd.Series(model.predict(X_test), index=y_test.index)
     baseline  = series.shift(1).rolling(3).mean().reindex(y_test.index)
 
@@ -122,6 +120,7 @@ def get_predictions_and_model(category_name, base_freq):
         r["RMSE"] = round(np.sqrt(mean_squared_error(y_test, r["preds"])), 1)
         r["R2"]   = round(r2_score(y_test, r["preds"]), 3)
 
+    # 5. Dự báo đệ quy cho 3 tháng tiếp theo
     fc_dates = pd.date_range(series.index[-1] + pd.DateOffset(months=1), periods=3, freq="MS")
     history  = list(series.values)
     fc_vals  = []
@@ -173,8 +172,8 @@ sam_cat    = df_samsung[df_samsung["ProductCategory"] == sel_cat]
 base_freq  = sam_cat["PurchaseFrequency"].mean()
 base_price = sam_cat["ProductPrice"].mean()
 
-# Triển khai gọi hàm huấn luyện siêu tốc qua cơ chế phân tách tham số chuỗi nhằm kích hoạt bộ đệm
-series, results, fc, xgb_model, X_train = get_predictions_and_model(sel_cat, base_freq)
+# GỌI HÀM PIPELINE ĐÃ ĐƯỢC CACHE: Tốc độ xử lý sẽ tăng vọt kể từ click thứ 2
+series, results, fc, xgb_model, X_train = run_entire_forecasting_pipeline(sel_cat, base_freq)
 best = max(results.items(), key=lambda x: x[1]["R2"])
 fc_dates = fc.index
 
