@@ -8,8 +8,7 @@ import plotly.express as px
 import streamlit as st
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 import xgboost as xgb
-import requests  # Tích hợp thư viện gọi API theo đúng yêu cầu đề bài
-
+import requests  
 # ── Page Config ────────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="Demand Forecasting",
@@ -53,7 +52,7 @@ div[data-testid="stExpander"] * { color: #1E3A5F !important; }
 </style>
 """, unsafe_allow_html=True)
 
-# ── ĐÃ TÍCH HỢP API VÀO HÀM LOAD DATA ───────────────────────────────────────────
+# ── TÍCH HỢP API VÀO HÀM LOAD DATA ───────────────────────────────────────────
 @st.cache_data(ttl=3600)  # Giới hạn gọi API 1 lần mỗi giờ để tối ưu tốc độ load
 def load_data():
     api_url = "https://api.abc-manufacturing.com/v1/sales-data"
@@ -70,7 +69,7 @@ def load_data():
     except Exception:
         return pd.read_csv("consumer_electronics_sales_data.csv")
 
-# ── ĐÃ SỬA: Gộp toàn bộ pipeline huấn luyện vào một hàm nhận tham số chuỗi ──────
+# ──  Gộp toàn bộ pipeline huấn luyện vào một hàm nhận tham số chuỗi ──────
 @st.cache_data
 def run_entire_forecasting_pipeline(category_name, base_freq):
     # 1. Tạo chuỗi thời gian cố định dựa trên hạt giống seed ổn định
