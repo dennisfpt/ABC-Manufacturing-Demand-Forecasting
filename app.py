@@ -174,9 +174,12 @@ Samsung Electronics Analytics &nbsp;|&nbsp; Samsung </p>
 
 # ── Train ─────────────────────────────────────────────────────────────────────
 sam_cat    = df_samsung[df_samsung["ProductCategory"] == sel_cat]
-base_price = sam_cat["ProductPrice"].mean() if len(sam_cat) > 0 else 100.0
 
-# GỌI HÀM PIPELINE VỚI THAM SỐ DỮ LIỆU ĐỘNG THỰC TẾ
+# GIAO DIỆN CHỌN HÃNG ĐỘNG (Dùng để hiển thị ô KPI giá trị trung bình)
+compare_brand_cat_df = df_all[(df_all["ProductBrand"] == sel_brand) & (df_all["ProductCategory"] == sel_cat)]
+base_price = compare_brand_cat_df["ProductPrice"].mean() if len(compare_brand_cat_df) > 0 else 100.0
+
+# GỌI HÀM PIPELINE VỚI THAM SỐ DỮ LIỆU ĐỘNG THỰC TẾ CỦA SAMSUNG
 series, results, fc, xgb_model, X_train = run_entire_forecasting_pipeline(sam_cat)
 best = max(results.items(), key=lambda x: x[1]["R2"])
 fc_dates = fc.index
@@ -186,7 +189,8 @@ k1, k2, k3, k4, k5 = st.columns(5)
 with k1:
     st.markdown(f"<div class='kpi'><div class='kpi-l'>Samsung Records</div><div class='kpi-v'>{len(df_samsung):,}</div><div class='kpi-s'>All categories</div></div>", unsafe_allow_html=True)
 with k2:
-    st.markdown(f"<div class='kpi'><div class='kpi-l'>Avg Price · {sel_cat}</div><div class='kpi-v'>${base_price:,.0f}</div><div class='kpi-s'>Samsung</div></div>", unsafe_allow_html=True)
+    # HIỂN THỊ ĐỘNG: Tên thương hiệu được chọn (sel_brand) ở dòng mô tả nhỏ dưới cùng
+    st.markdown(f"<div class='kpi'><div class='kpi-l'>Avg Price · {sel_cat}</div><div class='kpi-v'>${base_price:,.0f}</div><div class='kpi-s'>{sel_brand}</div></div>", unsafe_allow_html=True)
 with k3:
     intent_val = sam_cat['PurchaseIntent'].mean()*100 if len(sam_cat) > 0 else 0
     st.markdown(f"<div class='kpi'><div class='kpi-l'>Purchase Intent</div><div class='kpi-v'>{intent_val:.0f}%</div><div class='kpi-s'>{sel_cat} buyers</div></div>", unsafe_allow_html=True)
@@ -222,7 +226,11 @@ st.plotly_chart(fig_fc, use_container_width=True)
 st.markdown("<div class='sh'>🔍 Brand Comparison</div>", unsafe_allow_html=True)
 col1, col2 = st.columns(2)
 with col1:
-    pb = df_all[df_all["ProductCategory"] == sel_cat].groupby("ProductBrand")["ProductPrice"].mean().reset_index()
+    # Chuẩn hóa văn bản để bóc tách dữ liệu chính xác 100%
+    df_all_clean = df_all.copy()
+    df_all_clean["ProductCategory"] = df_all_clean["ProductCategory"].astype(str).str.strip()
+    
+    pb = df_all_clean[df_all_clean["ProductCategory"] == sel_cat].groupby("ProductBrand")["ProductPrice"].mean().reset_index()
     clr = ["#2563EB" if b == "Samsung" else "#10B981" if b == sel_brand else "#CBD5E1" for b in pb["ProductBrand"]]
     fig_p = go.Figure(go.Bar(x=pb["ProductBrand"], y=pb["ProductPrice"],
         marker_color=clr, text=pb["ProductPrice"].round(0),
@@ -233,7 +241,7 @@ with col1:
     st.plotly_chart(fig_p, use_container_width=True)
 
 with col2:
-    sb = df_all[df_all["ProductCategory"] == sel_cat].groupby("ProductBrand")["CustomerSatisfaction"].mean().reset_index()
+    sb = df_all_clean[df_all_clean["ProductCategory"] == sel_cat].groupby("ProductBrand")["CustomerSatisfaction"].mean().reset_index()
     clr2 = ["#2563EB" if b == "Samsung" else "#10B981" if b == sel_brand else "#CBD5E1" for b in sb["ProductBrand"]]
     fig_s = go.Figure(go.Bar(x=sb["ProductBrand"], y=sb["CustomerSatisfaction"],
         marker_color=clr2, text=sb["CustomerSatisfaction"].round(2),
