@@ -9,6 +9,7 @@ import streamlit as st
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 import xgboost as xgb
 import requests  
+
 # ── Page Config ────────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="Demand Forecasting",
@@ -167,9 +168,10 @@ Samsung Electronics Analytics &nbsp;|&nbsp; Samsung </p>
 """, unsafe_allow_html=True)
 
 # ── Train ─────────────────────────────────────────────────────────────────────
+# LỌC DỮ LIỆU ĐỘNG THEO DANH MỤC SẢN PHẨM HIỆN TẠI ĐƯỢC CHỌN
 sam_cat    = df_samsung[df_samsung["ProductCategory"] == sel_cat]
-base_freq  = sam_cat["PurchaseFrequency"].mean()
-base_price = sam_cat["ProductPrice"].mean()
+base_freq  = sam_cat["PurchaseFrequency"].mean() if len(sam_cat) > 0 else 1.0
+base_price = sam_cat["ProductPrice"].mean() if len(sam_cat) > 0 else 100.0
 
 # GỌI HÀM PIPELINE ĐÃ ĐƯỢC CACHE: Tốc độ xử lý sẽ tăng vọt kể từ click thứ 2
 series, results, fc, xgb_model, X_train = run_entire_forecasting_pipeline(sel_cat, base_freq)
@@ -181,11 +183,13 @@ k1, k2, k3, k4, k5 = st.columns(5)
 with k1:
     st.markdown(f"<div class='kpi'><div class='kpi-l'>Samsung Records</div><div class='kpi-v'>{len(df_samsung):,}</div><div class='kpi-s'>All categories</div></div>", unsafe_allow_html=True)
 with k2:
-    st.markdown(f"<div class='kpi'><div class='kpi-l'>Avg Price · {sel_cat}</div><div class='kpi-v'>${sam_cat['ProductPrice'].mean():,.0f}</div><div class='kpi-s'>Samsung</div></div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='kpi'><div class='kpi-l'>Avg Price · {sel_cat}</div><div class='kpi-v'>${base_price:,.0f}</div><div class='kpi-s'>Samsung</div></div>", unsafe_allow_html=True)
 with k3:
-    st.markdown(f"<div class='kpi'><div class='kpi-l'>Purchase Intent</div><div class='kpi-v'>{sam_cat['PurchaseIntent'].mean()*100:.0f}%</div><div class='kpi-s'>{sel_cat} buyers</div></div>", unsafe_allow_html=True)
+    intent_val = sam_cat['PurchaseIntent'].mean()*100 if len(sam_cat) > 0 else 0
+    st.markdown(f"<div class='kpi'><div class='kpi-l'>Purchase Intent</div><div class='kpi-v'>{intent_val:.0f}%</div><div class='kpi-s'>{sel_cat} buyers</div></div>", unsafe_allow_html=True)
 with k4:
-    st.markdown(f"<div class='kpi'><div class='kpi-l'>Avg Satisfaction</div><div class='kpi-v'>{sam_cat['CustomerSatisfaction'].mean():.1f}/5</div><div class='kpi-s'>{sel_cat}</div></div>", unsafe_allow_html=True)
+    sat_val = sam_cat['CustomerSatisfaction'].mean() if len(sam_cat) > 0 else 0
+    st.markdown(f"<div class='kpi'><div class='kpi-l'>Avg Satisfaction</div><div class='kpi-v'>{sat_val:.1f}/5</div><div class='kpi-s'>{sel_cat}</div></div>", unsafe_allow_html=True)
 with k5:
     st.markdown(f"<div class='kpi'><div class='kpi-l'>Best Model R²</div><div class='kpi-v' style='color:#10B981'>{best[1]['R2']}</div><div class='kpi-s'>{best[0]}</div></div>", unsafe_allow_html=True)
 
@@ -215,8 +219,10 @@ st.plotly_chart(fig_fc, use_container_width=True)
 st.markdown("<div class='sh'>🔍 Brand Comparison</div>", unsafe_allow_html=True)
 col1, col2 = st.columns(2)
 with col1:
-    pb = df_all[df_all["ProductCategory"]==sel_cat].groupby("ProductBrand")["ProductPrice"].mean().reset_index()
-    clr = ["#1E3A5F" if b=="Samsung" else "#CBD5E1" for b in pb["ProductBrand"]]
+    # CHỈ SỬA: Lọc dữ liệu theo đúng ProductCategory được chọn
+    pb = df_all[df_all["ProductCategory"] == sel_cat].groupby("ProductBrand")["ProductPrice"].mean().reset_index()
+    # Làm nổi bật cả thương hiệu Samsung và Thương hiệu so sánh (sel_brand) trên biểu đồ cột
+    clr = ["#2563EB" if b == "Samsung" else "#10B981" if b == sel_brand else "#CBD5E1" for b in pb["ProductBrand"]]
     fig_p = go.Figure(go.Bar(x=pb["ProductBrand"], y=pb["ProductPrice"],
         marker_color=clr, text=pb["ProductPrice"].round(0),
         texttemplate="$%{text}", textposition="outside"))
@@ -226,49 +232,54 @@ with col1:
     st.plotly_chart(fig_p, use_container_width=True)
 
 with col2:
-    sb = df_all[df_all["ProductCategory"]==sel_cat].groupby("ProductBrand")["CustomerSatisfaction"].mean().reset_index()
-    clr2 = ["#10B981" if b=="Samsung" else "#CBD5E1" for b in sb["ProductBrand"]]
+    # CHỈ SỬA: Lọc dữ liệu khảo sát độ hài lòng của riêng Category được chọn
+    sb = df_all[df_all["ProductCategory"] == sel_cat].groupby("ProductBrand")["CustomerSatisfaction"].mean().reset_index()
+    clr2 = ["#2563EB" if b == "Samsung" else "#10B981" if b == sel_brand else "#CBD5E1" for b in sb["ProductBrand"]]
     fig_s = go.Figure(go.Bar(x=sb["ProductBrand"], y=sb["CustomerSatisfaction"],
         marker_color=clr2, text=sb["CustomerSatisfaction"].round(2),
         texttemplate="%{text}/5", textposition="outside"))
     fig_s.update_layout(title=f"Satisfaction — {sel_cat}", plot_bgcolor="white",
         paper_bgcolor="white", height=300, margin=dict(l=40,r=20,t=40,b=20),
-        yaxis=dict(gridcolor="#F1F5F9", range=[0,6]), xaxis=dict(showgrid=False))
+        yaxis=dict(gridcolor="#F1F5F9", range=[0,5.5]), xaxis=dict(showgrid=False))
     st.plotly_chart(fig_s, use_container_width=True)
 
 # ── Samsung Analytics ─────────────────────────────────────────────────────────
 st.markdown("<div class='sh'>📊 Samsung Product Analytics</div>", unsafe_allow_html=True)
 col3, col4, col5 = st.columns(3)
 with col3:
-    cd = df_samsung["ProductCategory"].value_counts().reset_index()
+    # CHỈ SỬA: Vẽ biểu đồ tròn cơ cấu danh mục bán ra của thương hiệu được chọn so sánh
+    cd = df_all[df_all["ProductBrand"] == sel_brand]["ProductCategory"].value_counts().reset_index()
     cd.columns = ["Category","Count"]
     fig_pie = px.pie(cd, names="Category", values="Count",
         color="Category", color_discrete_map=CAT_CLR,
-        title="Samsung — Sales by Category", hole=0.4)
+        title=f"{sel_brand} — Sales by Category", hole=0.4)
     fig_pie.update_layout(paper_bgcolor="white", height=300,
         margin=dict(l=10,r=10,t=40,b=10), legend=dict(orientation="h",y=-0.15))
     st.plotly_chart(fig_pie, use_container_width=True)
 
 with col4:
-    fq = df_samsung.groupby("ProductCategory")["PurchaseFrequency"].mean().reset_index()
+    # CHỈ SỬA: Tỷ lệ tần suất mua hàng của thương hiệu so sánh
+    fq = df_all[df_all["ProductBrand"] == sel_brand].groupby("ProductCategory")["PurchaseFrequency"].mean().reset_index()
     fq.columns = ["Category","AvgFreq"]
     fq = fq.sort_values("AvgFreq")
     clr3 = [CAT_CLR.get(c,"#CBD5E1") for c in fq["Category"]]
     fig_fq = go.Figure(go.Bar(x=fq["AvgFreq"], y=fq["Category"],
         orientation="h", marker_color=clr3,
         text=fq["AvgFreq"].round(1), textposition="outside"))
-    fig_fq.update_layout(title="Avg Purchase Frequency", plot_bgcolor="white",
+    fig_fq.update_layout(title=f"Avg Purchase Frequency — {sel_brand}", plot_bgcolor="white",
         paper_bgcolor="white", height=300, margin=dict(l=110,r=50,t=40,b=20),
         xaxis=dict(gridcolor="#F1F5F9"), yaxis=dict(showgrid=False))
     st.plotly_chart(fig_fq, use_container_width=True)
 
 with col5:
-    sd = sam_cat["CustomerSatisfaction"].value_counts().sort_index().reset_index()
+    # CHỈ SỬA: Lọc điểm số hài lòng của thương hiệu đang chọn so sánh và đúng Category
+    brand_cat_df = df_all[(df_all["ProductBrand"] == sel_brand) & (df_all["ProductCategory"] == sel_cat)]
+    sd = brand_cat_df["CustomerSatisfaction"].value_counts().sort_index().reset_index()
     sd.columns = ["Score","Count"]
     sat_clr = ["#EF4444","#F59E0B","#94A3B8","#10B981","#2563EB"]
     fig_sd = go.Figure(go.Bar(x=sd["Score"].astype(str), y=sd["Count"],
         marker_color=sat_clr[:len(sd)], text=sd["Count"], textposition="outside"))
-    fig_sd.update_layout(title=f"Satisfaction — Samsung {sel_cat}",
+    fig_sd.update_layout(title=f"Satisfaction Distribution — {sel_brand} {sel_cat}",
         plot_bgcolor="white", paper_bgcolor="white", height=300,
         margin=dict(l=40,r=20,t=40,b=20),
         xaxis=dict(title="Score (1–5)", showgrid=False),
@@ -301,7 +312,7 @@ col8, col9 = st.columns(2)
 with col8:
     st.markdown(f"**3-Month Forecast — Samsung {sel_cat}**")
     fc_df = pd.DataFrame({
-        "Month": [d.strftime("%B %Y") for d in fc_dates],
+        "Month": [d.strftime("%B %Y") if hasattr(d, 'strftime') else str(d) for d in fc_dates],
         "Forecast Units": fc.values,
         "Est. Revenue (USD)": [f"${v*base_price:,.0f}" for v in fc.values],
     })
@@ -311,31 +322,4 @@ with col9:
     st.markdown("**Model Performance**")
     perf = []
     for name, r in results.items():
-        star = " ★ Best" if name == best[0] else ""
-        perf.append({"Model": name+star, "MAE": r["MAE"], "RMSE": r["RMSE"], "R²": r["R2"]})
-    st.dataframe(pd.DataFrame(perf), use_container_width=True, hide_index=True)
-
-# ── Raw Data ─────────────────────────────────────────────────────────────────
-with st.expander("📂 Raw Samsung Dataset (first 100 rows)"):
-    st.dataframe(sam_cat.head(100), use_container_width=True)
-
-# ── Recommendations ───────────────────────────────────────────────────────────
-st.markdown("<div class='sh'>💡 Recommendations for Operation Director</div>", unsafe_allow_html=True)
-top_cat = df_samsung.groupby("ProductCategory")["PurchaseFrequency"].mean().idxmax()
-recs = [
-    f"**Deploy XGBoost pipeline** for {sel_cat} demand planning — R²={best[1]['R2']}.",
-    f"**Purchase Intent is {sam_cat['PurchaseIntent'].mean()*100:.0f}%** for Samsung {sel_cat} — prioritize inventory.",
-    f"**{top_cat} has highest purchase frequency** — allocate more production resources here.",
-    f"**Customer Satisfaction averages {sam_cat['CustomerSatisfaction'].mean():.1f}/5** — improve after-sales service.",
-    "**Re-train models quarterly** with updated sales data to maintain accuracy.",
-]
-st.markdown("<div class='rec'>", unsafe_allow_html=True)
-for rec in recs:
-    st.markdown(f"✅ {rec}")
-st.markdown("</div>", unsafe_allow_html=True)
-
-# ── Footer ────────────────────────────────────────────────────────────────────
-st.markdown("---")
-st.markdown("<p style='text-align:center;color:#94A3B8;font-size:12px'>"
-    "© 2026 Samsung Electronics Analytics</p>",
-    unsafe_allow_html=True)
+        star = " ★ Best" if name == best
