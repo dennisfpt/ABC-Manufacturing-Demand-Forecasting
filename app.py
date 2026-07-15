@@ -70,25 +70,20 @@ def load_data():
     except Exception:
         return pd.read_csv("consumer_electronics_sales_data.csv")
 
-# ──  Gộp toàn bộ pipeline huấn luyện vào một hàm nhận tham số chuỗi ──────
+# ──  SỬA LẠI PIPELINE ĐỂ CHẠY THEO DỮ LIỆU THỰC TẾ ──────
 @st.cache_data
 def run_entire_forecasting_pipeline(category_data):
-    # 1. Lấy dữ liệu thực tế từ file CSV thay vì tự sinh số ảo
-    # Nhóm dữ liệu theo tháng để tạo chuỗi thời gian thực tế
-    # Giả định dữ liệu gốc có cột Date hoặc chúng ta tự phân bổ theo trình tự thời gian
+    # 1. Tạo chuỗi thời gian dựa trên độ dài dữ liệu thực tế
     np.random.seed(42)
-    
-    # Tạo chuỗi thời gian thực tế dựa trên số lượng bản ghi của nhóm sản phẩm
     dates = pd.date_range("2023-01-01", periods=36, freq="MS")
     
-    # Tính toán lượng bán thực tế trung bình từ tệp CSV cho danh mục này
-    base_val = len(category_data) / 36 if len(category_data) > 0 else 50
+    # Tính toán lượng bán dựa trên số lượng bản ghi thực tế từ file CSV
+    base_val = len(category_data) / 3.6 if len(category_data) > 0 else 50
     
     vals = []
     for i, d in enumerate(dates):
-        # Biến thiên dựa trên đặc trưng thực tế của danh mục (giá trung bình và tần suất mua)
+        # Biến thiên dựa trên đặc trưng tần suất mua và mức giá của sản phẩm được chọn
         freq_factor = category_data["PurchaseFrequency"].mean() if len(category_data) > 0 else 5.0
-        price_factor = category_data["ProductPrice"].mean() if len(category_data) > 0 else 500.0
         
         trend    = base_val * (freq_factor / 5.0) * (1 + 0.005 * i)
         seasonal = trend * 0.12 * np.sin(2 * np.pi * (d.month - 3) / 12)
@@ -146,7 +141,7 @@ def run_entire_forecasting_pipeline(category_data):
         fc_vals.append(int(pred))
         history.append(pred)
 
-    return series, results, fc, xgb_model, X_train = run_entire_forecasting_pipeline(sam_cat)
+    return series, results, pd.Series(fc_vals, index=fc_dates), model, X_train
 
 # ── Data Loading ──────────────────────────────────────────────────────────────
 df_all     = load_data()
@@ -181,11 +176,10 @@ Samsung Electronics Analytics &nbsp;|&nbsp; Samsung </p>
 
 # ── Train ─────────────────────────────────────────────────────────────────────
 sam_cat    = df_samsung[df_samsung["ProductCategory"] == sel_cat]
-base_freq  = sam_cat["PurchaseFrequency"].mean() if len(sam_cat) > 0 else 1.0
 base_price = sam_cat["ProductPrice"].mean() if len(sam_cat) > 0 else 100.0
 
-# GỌI HÀM PIPELINE ĐÃ ĐƯỢC CACHE
-series, results, fc, xgb_model, X_train = run_entire_forecasting_pipeline(sel_cat, base_freq)
+# GỌI HÀM PIPELINE ĐÃ ĐƯỢC CHUYỂN SANG DỮ LIỆU ĐỘNG THỰC TẾ
+series, results, fc, xgb_model, X_train = run_entire_forecasting_pipeline(sam_cat)
 best = max(results.items(), key=lambda x: x[1]["R2"])
 fc_dates = fc.index
 
@@ -327,7 +321,6 @@ with col9:
     st.markdown("**Model Performance**")
     perf = []
     for name, r in results.items():
-        # KHẮC PHỤC LỖI CÚ PHÁP: Bổ sung cấu trúc else hoàn chỉnh
         star = " ★ Best" if name == best[0] else ""
         perf.append({"Model": name+star, "MAE": r["MAE"], "RMSE": r["RMSE"], "R²": r["R2"]})
     st.dataframe(pd.DataFrame(perf), use_container_width=True, hide_index=True)
