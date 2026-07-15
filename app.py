@@ -9,6 +9,7 @@ import streamlit as st
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 import xgboost as xgb
 import requests  
+import io
 
 # ── Page Config ────────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -53,24 +54,21 @@ div[data-testid="stExpander"] * { color: #1E3A5F !important; }
 </style>
 """, unsafe_allow_html=True)
 
-# ── TÍCH HỢP API VÀO HÀM LOAD DATA ───────────────────────────────────────────
-@st.cache_data(ttl=3600)  # Giới hạn gọi API 1 lần mỗi giờ để tối ưu tốc độ load
+# ── TÍCH HỢP API THỰC TẾ & TỐI ƯU TỐC ĐỘ BẰNG CACHE ───────────────────────────
+@st.cache_data(ttl=86400)  # Lưu bộ nhớ đệm 24 tiếng để các lần bấm sau chạy SIÊU TỐC
 def load_data():
-    api_url = "https://api.abc-manufacturing.com/v1/sales-data"
-    headers = {
-        "Authorization": "Bearer ABC_SECRET_TOKEN_2026",
-        "Content-Type": "application/json"
-    }
+    # Sử dụng link API chứa file dữ liệu thật được deploy trên CDN GitHub (Tốc độ cực nhanh và luôn hoạt động)
+    api_url = "https://raw.githubusercontent.com/dennisfpt/abc-manufacturing-demand-forecasting/main/consumer_electronics_sales_data.csv"
     try:
-        response = requests.get(api_url, headers=headers, timeout=5)
+        response = requests.get(api_url, timeout=3)
         if response.status_code == 200:
-            return pd.DataFrame(response.json())
+            return pd.read_csv(io.StringIO(response.text))
         else:
             return pd.read_csv("consumer_electronics_sales_data.csv")
     except Exception:
         return pd.read_csv("consumer_electronics_sales_data.csv")
 
-# ──  SỬA LẠI PIPELINE ĐỂ CHẠY THEO DỮ LIỆU THỰC TẾ ──────
+# ── SỬA LẠI PIPELINE ĐỂ CHẠY THEO DỮ LIỆU THỰC TẾ ──────
 @st.cache_data
 def run_entire_forecasting_pipeline(category_data):
     # 1. Tạo chuỗi thời gian dựa trên độ dài dữ liệu thực tế
@@ -178,7 +176,7 @@ Samsung Electronics Analytics &nbsp;|&nbsp; Samsung </p>
 sam_cat    = df_samsung[df_samsung["ProductCategory"] == sel_cat]
 base_price = sam_cat["ProductPrice"].mean() if len(sam_cat) > 0 else 100.0
 
-# GỌI HÀM PIPELINE ĐÃ ĐƯỢC CHUYỂN SANG DỮ LIỆU ĐỘNG THỰC TẾ
+# GỌI HÀM PIPELINE VỚI THAM SỐ DỮ LIỆU ĐỘNG THỰC TẾ
 series, results, fc, xgb_model, X_train = run_entire_forecasting_pipeline(sam_cat)
 best = max(results.items(), key=lambda x: x[1]["R2"])
 fc_dates = fc.index
