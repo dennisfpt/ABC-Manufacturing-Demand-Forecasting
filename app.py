@@ -321,8 +321,10 @@ with col9:
     st.dataframe(pd.DataFrame(perf), use_container_width=True, hide_index=True)
 
 # ── Raw Data ─────────────────────────────────────────────────────────────────
-with st.expander("📂 Raw Samsung Dataset (first 100 rows)"):
-    st.dataframe(sam_cat.head(100), use_container_width=True)
+with st.expander(f"📂 Raw {sel_brand} Dataset (first 100 rows)"):
+    # Lọc dữ liệu tổng theo Thương hiệu so sánh và Danh mục đang chọn
+    compare_brand_data = df_all[(df_all["ProductBrand"] == sel_brand) & (df_all["ProductCategory"] == sel_cat)]
+    st.dataframe(compare_brand_data.head(100), use_container_width=True)
 
 # ── Recommendations ───────────────────────────────────────────────────────────
 st.markdown("<div class='sh'>💡 Recommendations for Operation Director</div>", unsafe_allow_html=True)
