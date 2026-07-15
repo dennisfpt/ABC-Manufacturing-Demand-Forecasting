@@ -168,12 +168,11 @@ Samsung Electronics Analytics &nbsp;|&nbsp; Samsung </p>
 """, unsafe_allow_html=True)
 
 # ── Train ─────────────────────────────────────────────────────────────────────
-# LỌC DỮ LIỆU ĐỘNG THEO DANH MỤC SẢN PHẨM HIỆN TẠI ĐƯỢC CHỌN
 sam_cat    = df_samsung[df_samsung["ProductCategory"] == sel_cat]
 base_freq  = sam_cat["PurchaseFrequency"].mean() if len(sam_cat) > 0 else 1.0
 base_price = sam_cat["ProductPrice"].mean() if len(sam_cat) > 0 else 100.0
 
-# GỌI HÀM PIPELINE ĐÃ ĐƯỢC CACHE: Tốc độ xử lý sẽ tăng vọt kể từ click thứ 2
+# GỌI HÀM PIPELINE ĐÃ ĐƯỢC CACHE
 series, results, fc, xgb_model, X_train = run_entire_forecasting_pipeline(sel_cat, base_freq)
 best = max(results.items(), key=lambda x: x[1]["R2"])
 fc_dates = fc.index
@@ -219,9 +218,7 @@ st.plotly_chart(fig_fc, use_container_width=True)
 st.markdown("<div class='sh'>🔍 Brand Comparison</div>", unsafe_allow_html=True)
 col1, col2 = st.columns(2)
 with col1:
-    # CHỈ SỬA: Lọc dữ liệu theo đúng ProductCategory được chọn
     pb = df_all[df_all["ProductCategory"] == sel_cat].groupby("ProductBrand")["ProductPrice"].mean().reset_index()
-    # Làm nổi bật cả thương hiệu Samsung và Thương hiệu so sánh (sel_brand) trên biểu đồ cột
     clr = ["#2563EB" if b == "Samsung" else "#10B981" if b == sel_brand else "#CBD5E1" for b in pb["ProductBrand"]]
     fig_p = go.Figure(go.Bar(x=pb["ProductBrand"], y=pb["ProductPrice"],
         marker_color=clr, text=pb["ProductPrice"].round(0),
@@ -232,7 +229,6 @@ with col1:
     st.plotly_chart(fig_p, use_container_width=True)
 
 with col2:
-    # CHỈ SỬA: Lọc dữ liệu khảo sát độ hài lòng của riêng Category được chọn
     sb = df_all[df_all["ProductCategory"] == sel_cat].groupby("ProductBrand")["CustomerSatisfaction"].mean().reset_index()
     clr2 = ["#2563EB" if b == "Samsung" else "#10B981" if b == sel_brand else "#CBD5E1" for b in sb["ProductBrand"]]
     fig_s = go.Figure(go.Bar(x=sb["ProductBrand"], y=sb["CustomerSatisfaction"],
@@ -247,7 +243,6 @@ with col2:
 st.markdown("<div class='sh'>📊 Samsung Product Analytics</div>", unsafe_allow_html=True)
 col3, col4, col5 = st.columns(3)
 with col3:
-    # CHỈ SỬA: Vẽ biểu đồ tròn cơ cấu danh mục bán ra của thương hiệu được chọn so sánh
     cd = df_all[df_all["ProductBrand"] == sel_brand]["ProductCategory"].value_counts().reset_index()
     cd.columns = ["Category","Count"]
     fig_pie = px.pie(cd, names="Category", values="Count",
@@ -258,7 +253,6 @@ with col3:
     st.plotly_chart(fig_pie, use_container_width=True)
 
 with col4:
-    # CHỈ SỬA: Tỷ lệ tần suất mua hàng của thương hiệu so sánh
     fq = df_all[df_all["ProductBrand"] == sel_brand].groupby("ProductCategory")["PurchaseFrequency"].mean().reset_index()
     fq.columns = ["Category","AvgFreq"]
     fq = fq.sort_values("AvgFreq")
@@ -272,7 +266,6 @@ with col4:
     st.plotly_chart(fig_fq, use_container_width=True)
 
 with col5:
-    # CHỈ SỬA: Lọc điểm số hài lòng của thương hiệu đang chọn so sánh và đúng Category
     brand_cat_df = df_all[(df_all["ProductBrand"] == sel_brand) & (df_all["ProductCategory"] == sel_cat)]
     sd = brand_cat_df["CustomerSatisfaction"].value_counts().sort_index().reset_index()
     sd.columns = ["Score","Count"]
@@ -322,4 +315,32 @@ with col9:
     st.markdown("**Model Performance**")
     perf = []
     for name, r in results.items():
-        star = " ★ Best" if name == best
+        # KHẮC PHỤC LỖI CÚ PHÁP: Bổ sung cấu trúc else hoàn chỉnh
+        star = " ★ Best" if name == best[0] else ""
+        perf.append({"Model": name+star, "MAE": r["MAE"], "RMSE": r["RMSE"], "R²": r["R2"]})
+    st.dataframe(pd.DataFrame(perf), use_container_width=True, hide_index=True)
+
+# ── Raw Data ─────────────────────────────────────────────────────────────────
+with st.expander("📂 Raw Samsung Dataset (first 100 rows)"):
+    st.dataframe(sam_cat.head(100), use_container_width=True)
+
+# ── Recommendations ───────────────────────────────────────────────────────────
+st.markdown("<div class='sh'>💡 Recommendations for Operation Director</div>", unsafe_allow_html=True)
+top_cat = df_samsung.groupby("ProductCategory")["PurchaseFrequency"].mean().idxmax()
+recs = [
+    f"**Deploy XGBoost pipeline** for {sel_cat} demand planning — R²={best[1]['R2']}.",
+    f"**Purchase Intent is {intent_val:.0f}%** for Samsung {sel_cat} — prioritize inventory.",
+    f"**{top_cat} has highest purchase frequency** — allocate more production resources here.",
+    f"**Customer Satisfaction averages {sat_val:.1f}/5** — improve after-sales service.",
+    "**Re-train models quarterly** with updated sales data to maintain accuracy.",
+]
+st.markdown("<div class='rec'>", unsafe_allow_html=True)
+for rec in recs:
+    st.markdown(f"✅ {rec}")
+st.markdown("</div>", unsafe_allow_html=True)
+
+# ── Footer ────────────────────────────────────────────────────────────────────
+st.markdown("---")
+st.markdown("<p style='text-align:center;color:#94A3B8;font-size:12px'>"
+    "© 2026 Samsung Electronics Analytics</p>",
+    unsafe_allow_html=True)
