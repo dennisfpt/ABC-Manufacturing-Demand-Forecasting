@@ -146,7 +146,7 @@ def run_entire_forecasting_pipeline(category_data):
         fc_vals.append(int(pred))
         history.append(pred)
 
-    return series, results, pd.Series(fc_vals, index=fc_dates), model, X_train
+    return series, results, fc, xgb_model, X_train = run_entire_forecasting_pipeline(sam_cat)
 
 # ── Data Loading ──────────────────────────────────────────────────────────────
 df_all     = load_data()
