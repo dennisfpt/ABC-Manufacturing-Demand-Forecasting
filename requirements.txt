@@ -2,6 +2,6 @@ numpy
 pandas
 plotly
 scikit-learn
-xgboost
 streamlit
+statsmodels
 starlette<0.36.0
