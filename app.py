@@ -6,8 +6,9 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
 import streamlit as st
+from sklearn.linear_model import Ridge
+from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
-import xgboost as xgb
 import requests  
 import io
 
@@ -49,13 +50,13 @@ def load_data():
     except Exception:
         return pd.read_csv("consumer_electronics_sales_data.csv")
 
-# ── PIPELINE DỰ BÁO XGBOOST TỐI ƯU CÓ TÍNH MÙA VỤ ────────────────────────────
+# ── PIPELINE DỰ BÁO CỦA MÔ HÌNH RIDGE REGRESSION ─────────────────────────────
 @st.cache_data
 def run_entire_forecasting_pipeline(category_data):
     np.random.seed(42)
     dates = pd.date_range("2023-01-01", periods=36, freq="MS")
     
-    # 1. Tạo chuỗi thời gian thực tế
+    # 1. Tạo chuỗi thời gian nhu cầu
     freq_factor = category_data["PurchaseFrequency"].mean() if len(category_data) > 0 else 2.5
     base_val = len(category_data) * (freq_factor / 10.0) if len(category_data) > 0 else 120
     
@@ -68,46 +69,48 @@ def run_entire_forecasting_pipeline(category_data):
         
     series = pd.Series(vals, index=dates)
 
-    # 2. Xây dựng Đặc trưng nâng cao (Feature Engineering hỗ trợ XGBoost bắt mùa vụ)
+    # 2. Xây dựng Đặc trưng (Feature Engineering)
     feat = pd.DataFrame({"y": series})
     for lag in range(1, 4):
         feat[f"lag_{lag}"] = feat["y"].shift(lag)
     feat["roll_mean"] = feat["y"].shift(1).rolling(3).mean()
     feat["roll_std"]  = feat["y"].shift(1).rolling(3).std()
     feat["month"]     = series.index.month
-    feat["is_peak"]   = series.index.month.isin([11, 12]).astype(int) # Nhận biết tháng cao điểm
+    feat["is_peak"]   = series.index.month.isin([11, 12]).astype(int)
     feat["trend"]     = np.arange(len(feat))
     feat = feat.dropna()
 
-    # 3. Chia tập Train/Test theo thứ tự thời gian (80/20)
+    # 3. Chia tập Train/Test theo dòng thời gian (80/20)
     SPLIT   = int(len(feat) * 0.80)
     X_train = feat.iloc[:SPLIT].drop("y", axis=1)
     y_train = feat.iloc[:SPLIT]["y"]
     X_test  = feat.iloc[SPLIT:].drop("y", axis=1)
     y_test  = feat.iloc[SPLIT:]["y"]
 
-    # 4. Huấn luyện XGBoost Regressor
-    model = xgb.XGBRegressor(
-        n_estimators=100, learning_rate=0.05, max_depth=3, 
-        subsample=0.8, colsample_bytree=0.8, random_state=42, verbosity=0, n_jobs=-1
-    )
-    model.fit(X_train, y_train, eval_set=[(X_test, y_test)], verbose=False)
+    # 4. Chuẩn hóa & Huấn luyện mô hình Ridge Regression
+    scaler = StandardScaler()
+    X_train_scaled = scaler.fit_transform(X_train)
+    X_test_scaled  = scaler.transform(X_test)
+
+    model = Ridge(alpha=1.0, random_state=42)
+    model.fit(X_train_scaled, y_train)
     
-    xgb_pred = pd.Series(model.predict(X_test), index=y_test.index)
-    baseline = series.shift(1).rolling(3).mean().reindex(y_test.index).bfill()
+    ridge_pred = pd.Series(model.predict(X_test_scaled), index=y_test.index)
+
+    # Tính toán chỉ số đánh giá thực tế
+    mae  = round(mean_absolute_error(y_test, ridge_pred), 1)
+    rmse = round(np.sqrt(mean_squared_error(y_test, ridge_pred)), 1)
+    r2   = round(r2_score(y_test, ridge_pred), 3)
+    mape = round(np.mean(np.abs((y_test - ridge_pred) / y_test)) * 100, 2)
 
     results = {
-        "Baseline MA-3": {"preds": baseline, "color": "#94A3B8"},
-        "XGBoost":       {"preds": xgb_pred,  "color": "#F59E0B"},
+        "Ridge Regression": {
+            "preds": ridge_pred, "color": "#F59E0B",
+            "MAE": mae, "RMSE": rmse, "R2": r2, "MAPE": mape
+        }
     }
-    
-    # Tính toán chính xác metrics THỰC TẾ (Không dùng max() ép điểm)
-    for name, r in results.items():
-        r["MAE"]  = round(mean_absolute_error(y_test, r["preds"]), 1)
-        r["RMSE"] = round(np.sqrt(mean_squared_error(y_test, r["preds"])), 1)
-        r["R2"]   = round(r2_score(y_test, r["preds"]), 3)
 
-    # 5. Dự báo đệ quy 3 tháng tiếp theo
+    # 5. Dự báo đệ quy cho 3 tháng tiếp theo
     fc_dates = pd.date_range(series.index[-1] + pd.DateOffset(months=1), periods=3, freq="MS")
     history  = list(series.values)
     fc_vals  = []
@@ -117,7 +120,8 @@ def run_entire_forecasting_pipeline(category_data):
         row = pd.DataFrame([[history[-1], history[-2], history[-3],
                              np.mean(history[-3:]), np.std(history[-3:]),
                              m, is_peak_val, len(history) + step]], columns=X_train.columns)
-        pred = float(model.predict(row)[0])
+        row_scaled = scaler.transform(row)
+        pred = float(model.predict(row_scaled)[0])
         fc_vals.append(int(pred))
         history.append(pred)
 
@@ -162,8 +166,8 @@ raw_price = compare_brand_cat_df["ProductPrice"].mean() if len(compare_brand_cat
 base_price = price_reference_map[sel_cat] if (sel_cat in price_reference_map and raw_price > price_reference_map[sel_cat] * 2) else raw_price
 
 # ── GỌI MÔ HÌNH DỰ BÁO ────────────────────────────────────────────────────────
-series, results, fc, xgb_model, X_train = run_entire_forecasting_pipeline(sam_cat)
-best = results["XGBoost"]
+series, results, fc, ridge_model, X_train = run_entire_forecasting_pipeline(sam_cat)
+best = results["Ridge Regression"]
 fc_dates = fc.index
 
 # ── KPIs ──────────────────────────────────────────────────────────────────────
@@ -179,7 +183,7 @@ with k4:
     sat_val = sam_cat['CustomerSatisfaction'].mean() if len(sam_cat) > 0 else 0
     st.markdown(f"<div class='kpi'><div class='kpi-l'>Avg Satisfaction</div><div class='kpi-v'>{sat_val:.1f}/5</div><div class='kpi-s'>{sel_cat}</div></div>", unsafe_allow_html=True)
 with k5:
-    st.markdown(f"<div class='kpi'><div class='kpi-l'>XGBoost R² Score</div><div class='kpi-v' style='color:#10B981'>{best['R2']}</div><div class='kpi-s'>Evaluated on Test set</div></div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='kpi'><div class='kpi-l'>Ridge Model R²</div><div class='kpi-v' style='color:#10B981'>{best['R2']}</div><div class='kpi-s'>MAPE: {best['MAPE']}%</div></div>", unsafe_allow_html=True)
 
 st.markdown("<br>", unsafe_allow_html=True)
 
@@ -187,17 +191,10 @@ st.markdown("<br>", unsafe_allow_html=True)
 st.markdown(f"<div class='sh'>📈 Demand Forecast — Samsung {sel_cat}</div>", unsafe_allow_html=True)
 fig_fc = go.Figure()
 fig_fc.add_trace(go.Scatter(x=series.index, y=series.values, name="Actual", line=dict(color="#1E3A5F", width=2.5)))
-for name, r in results.items():
-    fig_fc.add_trace(go.Scatter(x=r["preds"].index, y=r["preds"].values,
-        name=f"{name} (R²={r['R2']})", line=dict(color=r["color"], width=2, dash="dash")))
-fig_fc.add_trace(go.Scatter(x=fc_dates, y=fc.values, name="XGBoost Forecast",
-    mode="lines+markers", marker=dict(size=10, symbol="triangle-up"),
-    line=dict(color="#F59E0B", width=2.5)))
-fig_fc.add_vrect(x0=fc_dates[0], x1=fc_dates[-1], fillcolor="rgba(139,92,246,0.08)", line_width=0,
-    annotation_text="Forecast →", annotation_position="top left", annotation_font_color="#8B5CF6")
-fig_fc.update_layout(plot_bgcolor="white", paper_bgcolor="white", height=360,
-    legend=dict(orientation="h", y=-0.22), margin=dict(l=40,r=20,t=10,b=60),
-    xaxis=dict(showgrid=False), yaxis=dict(gridcolor="#F1F5F9", title="Units/month"))
+fig_fc.add_trace(go.Scatter(x=best["preds"].index, y=best["preds"].values, name=f"Ridge Preds (R²={best['R2']})", line=dict(color="#F59E0B", width=2, dash="dash")))
+fig_fc.add_trace(go.Scatter(x=fc_dates, y=fc.values, name="Ridge Forecast", mode="lines+markers", marker=dict(size=10, symbol="triangle-up"), line=dict(color="#10B981", width=2.5)))
+fig_fc.add_vrect(x0=fc_dates[0], x1=fc_dates[-1], fillcolor="rgba(139,92,246,0.08)", line_width=0, annotation_text="Forecast →", annotation_position="top left", annotation_font_color="#8B5CF6")
+fig_fc.update_layout(plot_bgcolor="white", paper_bgcolor="white", height=360, legend=dict(orientation="h", y=-0.22), margin=dict(l=40,r=20,t=10,b=60), xaxis=dict(showgrid=False), yaxis=dict(gridcolor="#F1F5F9", title="Units/month"))
 st.plotly_chart(fig_fc, use_container_width=True)
 
 # ── Brand Comparison ──────────────────────────────────────────────────────────
@@ -247,7 +244,7 @@ with col5:
     fig_sd.update_layout(title=f"Satisfaction Distribution — {sel_brand} {sel_cat}", plot_bgcolor="white", paper_bgcolor="white", height=300, margin=dict(l=40,r=20,t=40,b=20), xaxis=dict(title="Score (1–5)", showgrid=False), yaxis=dict(gridcolor="#F1F5F9"))
     st.plotly_chart(fig_sd, use_container_width=True)
 
-# ── Heatmap & Feature Importance ─────────────────────────────────────────────
+# ── Heatmap & Feature Coefficients ─────────────────────────────────────────────
 st.markdown("<div class='sh'>🗺️ Market Heatmap & Model Insights</div>", unsafe_allow_html=True)
 col6, col7 = st.columns(2)
 with col6:
@@ -257,11 +254,11 @@ with col6:
     st.plotly_chart(fig_hm, use_container_width=True)
 
 with col7:
-    fi = pd.Series(xgb_model.feature_importances_, index=X_train.columns).sort_values()
-    clr_fi = ["#2563EB" if v==fi.max() else "#CBD5E1" for v in fi.values]
-    fig_fi = go.Figure(go.Bar(x=fi.values, y=fi.index, orientation="h", marker_color=clr_fi))
-    fig_fi.update_layout(title="XGBoost Feature Importance", plot_bgcolor="white", paper_bgcolor="white", height=320, margin=dict(l=120,r=40,t=40,b=20), xaxis=dict(gridcolor="#F1F5F9"), yaxis=dict(showgrid=False))
-    st.plotly_chart(fig_fi, use_container_width=True)
+    coef = pd.Series(ridge_model.coef_, index=X_train.columns).sort_values()
+    clr_coef = ["#2563EB" if v > 0 else "#EF4444" for v in coef.values]
+    fig_coef = go.Figure(go.Bar(x=coef.values, y=coef.index, orientation="h", marker_color=clr_coef))
+    fig_coef.update_layout(title="Ridge Model Feature Coefficients", plot_bgcolor="white", paper_bgcolor="white", height=320, margin=dict(l=120,r=40,t=40,b=20), xaxis=dict(gridcolor="#F1F5F9"), yaxis=dict(showgrid=False))
+    st.plotly_chart(fig_coef, use_container_width=True)
 
 # ── Forecast Table + Model Performance ───────────────────────────────────────
 st.markdown("<div class='sh'>📋 Forecast Results & Model Performance</div>", unsafe_allow_html=True)
@@ -276,15 +273,14 @@ with col8:
     st.dataframe(fc_df, use_container_width=True, hide_index=True)
 
 with col9:
-    st.markdown("**Model Performance (Evaluation Metric: R²)**")
-    perf = []
-    for name, r in results.items():
-        perf.append({
-            "Model": name, 
-            "MAE": r["MAE"], 
-            "RMSE": r["RMSE"], 
-            "R² Score": r["R2"]
-        })
+    st.markdown("**Model Performance Metrics**")
+    perf = [{
+        "Model": "Ridge Regression",
+        "MAE": best["MAE"],
+        "RMSE": best["RMSE"],
+        "MAPE (%)": f"{best['MAPE']}%",
+        "R² Score": best["R2"]
+    }]
     st.dataframe(pd.DataFrame(perf), use_container_width=True, hide_index=True)
 
 # ── Raw Data ─────────────────────────────────────────────────────────────────
@@ -296,7 +292,7 @@ with st.expander(f"📂 Raw {sel_brand} Dataset (first 100 rows)"):
 st.markdown("<div class='sh'>💡 Recommendations for Operation Director</div>", unsafe_allow_html=True)
 top_cat = df_samsung.groupby("ProductCategory")["PurchaseFrequency"].mean().idxmax()
 recs = [
-    f"**Deploy XGBoost Regressor** for {sel_cat} demand planning — Evaluated R²={best['R2']}.",
+    f"**Deploy Ridge Regression Model** for {sel_cat} demand planning — Achieved R²={best['R2']} with MAPE={best['MAPE']}%.",
     f"**Purchase Intent is {intent_val:.0f}%** for Samsung {sel_cat} — prioritize inventory.",
     f"**{top_cat} has highest purchase frequency** — allocate more production resources here.",
     f"**Customer Satisfaction averages {sat_val:.1f}/5** — improve after-sales service.",
