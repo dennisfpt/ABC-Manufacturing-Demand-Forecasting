@@ -8,6 +8,7 @@ import plotly.express as px
 import streamlit as st
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.ensemble import RandomForestRegressor
+from sklearn.model_selection import TimeSeriesSplit
 import requests  
 import io
 
@@ -72,24 +73,32 @@ def load_data():
 @st.cache_data
 def run_entire_forecasting_pipeline(category_data):
     # 1. Tạo chuỗi thời gian dựa trên độ dài dữ liệu thực tế
-    np.random.seed(42)
     dates = pd.date_range("2023-01-01", periods=36, freq="MS")
-    
+
     # Tính toán lượng bán dựa trên số lượng bản ghi thực tế từ file CSV
     base_val = len(category_data) / 3.6 if len(category_data) > 0 else 50
-    
+
+    # Biến thiên dựa trên đặc trưng tần suất mua và mức giá của sản phẩm được chọn
+    freq_factor  = category_data["PurchaseFrequency"].mean() if len(category_data) > 0 else 5.0
+    price_factor = category_data["ProductPrice"].mean() if (len(category_data) > 0 and "ProductPrice" in category_data) else 100.0
+
+    # SEED ĐỘNG THEO CATEGORY: mỗi category có seed, biên độ mùa vụ và pha mùa vụ
+    # riêng dựa trên đặc trưng dữ liệu của chính nó -> pattern khác nhau rõ ràng
+    # giữa các category, thay vì dùng chung 1 seed cố định (=> hình dạng na ná nhau).
+    seed_base    = int(abs(hash((round(freq_factor, 4), round(price_factor, 2), len(category_data)))) % 100000)
+    rng          = np.random.default_rng(seed_base)
+    phase_shift  = seed_base % 12                                   # tháng đỉnh mùa vụ khác nhau
+    seasonal_amp = 0.08 + 0.10 * ((seed_base % 100) / 100)           # biên độ mùa vụ khác nhau (0.08–0.18)
+
     vals = []
     for i, d in enumerate(dates):
-        # Biến thiên dựa trên đặc trưng tần suất mua và mức giá của sản phẩm được chọn
-        freq_factor = category_data["PurchaseFrequency"].mean() if len(category_data) > 0 else 5.0
-        
         trend    = base_val * (freq_factor / 5.0) * (1 + 0.005 * i)
-        seasonal = trend * 0.12 * np.sin(2 * np.pi * (d.month - 3) / 12)
-        noise    = np.random.normal(0, trend * 0.03)
+        seasonal = trend * seasonal_amp * np.sin(2 * np.pi * (d.month - phase_shift) / 12)
+        noise    = rng.normal(0, trend * 0.03)
         vals.append(int(max(10, trend + seasonal + noise)))
-        
+
     series = pd.Series(vals, index=dates)
-    
+
     # 2. Xây dựng Đặc trưng (Feature Engineering)
     feat = pd.DataFrame({"y": series})
     for lag in range(1, 4):
@@ -101,14 +110,53 @@ def run_entire_forecasting_pipeline(category_data):
     feat["trend"]     = np.arange(len(feat))
     feat = feat.dropna()
 
-    # 3. Chia tập dữ liệu Train/Test (80/20)
-    SPLIT   = int(len(feat) * 0.80)
-    X_train = feat.iloc[:SPLIT].drop("y", axis=1)
-    y_train = feat.iloc[:SPLIT]["y"]
-    X_test  = feat.iloc[SPLIT:].drop("y", axis=1)
-    y_test  = feat.iloc[SPLIT:]["y"]
+    X_all = feat.drop("y", axis=1)
+    y_all = feat["y"]
 
-    # 4. Huấn luyện mô hình Random Forest
+    # 3. ĐÁNH GIÁ MODEL BẰNG TIME SERIES CROSS-VALIDATION (thay vì 1 lần split 80/20)
+    # Với chỉ ~30 điểm dữ liệu, đánh giá 1 lần trên ~6 điểm test rất bất ổn định.
+    # TimeSeriesSplit tạo nhiều fold theo đúng thứ tự thời gian (không leak tương lai
+    # vào quá khứ), sau đó lấy TRUNG BÌNH các chỉ số qua các fold -> ổn định hơn nhiều.
+    n_splits = 4 if len(X_all) >= 12 else 2
+    tscv = TimeSeriesSplit(n_splits=n_splits, test_size=3)
+
+    fold_metrics = {
+        "Baseline MA-3": {"MAE": [], "RMSE": [], "R2": []},
+        "Random Forest": {"MAE": [], "RMSE": [], "R2": []},
+    }
+    last_fold_preds = {}
+
+    for train_idx, test_idx in tscv.split(X_all):
+        X_tr, X_te = X_all.iloc[train_idx], X_all.iloc[test_idx]
+        y_tr, y_te = y_all.iloc[train_idx], y_all.iloc[test_idx]
+
+        fold_model = RandomForestRegressor(
+            n_estimators=300, max_depth=5, min_samples_leaf=2,
+            random_state=42, n_jobs=-1,
+        )
+        fold_model.fit(X_tr, y_tr)
+        rf_pred_fold  = pd.Series(fold_model.predict(X_te), index=y_te.index)
+        base_pred_fold = series.shift(1).rolling(3).mean().reindex(y_te.index)
+
+        for name, preds in [("Baseline MA-3", base_pred_fold), ("Random Forest", rf_pred_fold)]:
+            fold_metrics[name]["MAE"].append(mean_absolute_error(y_te, preds))
+            fold_metrics[name]["RMSE"].append(np.sqrt(mean_squared_error(y_te, preds)))
+            fold_metrics[name]["R2"].append(r2_score(y_te, preds))
+
+        last_fold_preds = {"Baseline MA-3": base_pred_fold, "Random Forest": rf_pred_fold}
+
+    colors  = {"Baseline MA-3": "#94A3B8", "Random Forest": "#F59E0B"}
+    results = {}
+    for name in fold_metrics:
+        results[name] = {
+            "preds": last_fold_preds[name],
+            "color": colors[name],
+            "MAE":  round(float(np.mean(fold_metrics[name]["MAE"])), 1),
+            "RMSE": round(float(np.mean(fold_metrics[name]["RMSE"])), 1),
+            "R2":   round(float(np.mean(fold_metrics[name]["R2"])), 3),
+        }
+
+    # 4. Huấn luyện mô hình CUỐI CÙNG trên TOÀN BỘ dữ liệu để dùng cho dự báo tương lai
     # Random Forest ổn định hơn với dữ liệu ít điểm (36 tháng) và có nhiễu,
     # ít bị overfitting hơn so với boosting (XGBoost) trong trường hợp này.
     model = RandomForestRegressor(
@@ -118,19 +166,8 @@ def run_entire_forecasting_pipeline(category_data):
         random_state=42,
         n_jobs=-1,
     )
-    model.fit(X_train, y_train)
-
-    rf_pred  = pd.Series(model.predict(X_test), index=y_test.index)
-    baseline = series.shift(1).rolling(3).mean().reindex(y_test.index)
-
-    results = {
-        "Baseline MA-3":  {"preds": baseline, "color": "#94A3B8"},
-        "Random Forest":  {"preds": rf_pred,  "color": "#F59E0B"},
-    }
-    for r in results.values():
-        r["MAE"]  = round(mean_absolute_error(y_test, r["preds"]), 1)
-        r["RMSE"] = round(np.sqrt(mean_squared_error(y_test, r["preds"])), 1)
-        r["R2"]   = round(r2_score(y_test, r["preds"]), 3)
+    model.fit(X_all, y_all)
+    X_train = X_all  # giữ tên biến để phần dưới (feature importance, forecast) không đổi
 
     # 5. Dự báo đệ quy cho 3 tháng tiếp theo
     fc_dates = pd.date_range(series.index[-1] + pd.DateOffset(months=1), periods=3, freq="MS")
