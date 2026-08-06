@@ -106,18 +106,29 @@ def run_entire_forecasting_pipeline(category_data):
     series = pd.Series(vals, index=dates)
 
     # 2. Xây dựng Đặc trưng (Feature Engineering)
+    # QUAN TRỌNG: Random Forest (và các mô hình cây nói chung) KHÔNG NGOẠI SUY được
+    # -> khi dự đoán trực tiếp số lượng (units) trên chuỗi có xu hướng tăng liên tục,
+    # model luôn dự đoán thấp hơn thực tế vì nó chỉ có thể "chạm trần" ở giá trị lớn
+    # nhất từng thấy lúc train. Đây là nguyên nhân chính khiến R² âm ở các phiên bản
+    # trước, KHÔNG PHẢI do nhiễu dữ liệu.
+    # -> Giải pháp: cho model dự đoán TỶ LỆ TĂNG TRƯỞNG (units tháng này / tháng trước)
+    # thay vì giá trị tuyệt đối. Tỷ lệ này luôn dao động quanh 1.0 bất kể xu hướng đang
+    # ở mức nào, nên không bị giới hạn ngoại suy. Giá trị dự báo cuối cùng được tái tạo
+    # bằng cách nhân tỷ lệ dự đoán với giá trị thực tế của tháng liền trước.
     feat = pd.DataFrame({"y": series})
+    feat["ratio"] = feat["y"] / feat["y"].shift(1)
     for lag in range(1, 4):
-        feat[f"lag_{lag}"] = feat["y"].shift(lag)
-    feat["roll_mean"] = feat["y"].shift(1).rolling(3).mean()
-    feat["roll_std"]  = feat["y"].shift(1).rolling(3).std()
-    feat["month"]     = series.index.month
-    feat["quarter"]   = series.index.quarter
-    feat["trend"]     = np.arange(len(feat))
+        feat[f"lag_ratio_{lag}"] = feat["ratio"].shift(lag)
+    feat["roll_mean_ratio"] = feat["ratio"].shift(1).rolling(3).mean()
+    feat["month"]   = series.index.month
+    feat["quarter"] = series.index.quarter
+    feat["trend"]   = np.arange(len(feat))
     feat = feat.dropna()
 
-    X_all = feat.drop("y", axis=1)
-    y_all = feat["y"]
+    X_all      = feat.drop(["y", "ratio"], axis=1)
+    y_ratio_all = feat["ratio"]      # target model học: tỷ lệ tăng trưởng
+    y_all      = feat["y"]           # giá trị thực, dùng để tính MAE/RMSE/R² sau khi tái tạo
+    lag1_all   = series.shift(1).reindex(feat.index)   # giá trị thực tháng liền trước, để nhân ngược lại
 
     # 3. ĐÁNH GIÁ MODEL BẰNG TIME SERIES CROSS-VALIDATION (thay vì 1 lần split 80/20)
     # Với chỉ ~30 điểm dữ liệu, đánh giá 1 lần trên ~6 điểm test rất bất ổn định.
@@ -141,15 +152,18 @@ def run_entire_forecasting_pipeline(category_data):
 
     for train_idx, test_idx in tscv.split(X_all):
         X_tr, X_te = X_all.iloc[train_idx], X_all.iloc[test_idx]
-        y_tr, y_te = y_all.iloc[train_idx], y_all.iloc[test_idx]
+        y_ratio_tr = y_ratio_all.iloc[train_idx]
+        y_te       = y_all.iloc[test_idx]          # giá trị thực để so sánh
+        lag1_te    = lag1_all.iloc[test_idx]        # giá trị thực tháng liền trước để tái tạo dự đoán
 
         fold_model = RandomForestRegressor(
             n_estimators=300, max_depth=5, min_samples_leaf=2,
             random_state=42, n_jobs=-1,
         )
-        fold_model.fit(X_tr, y_tr)
-        rf_pred_fold  = pd.Series(fold_model.predict(X_te), index=y_te.index)
-        base_pred_fold = series.shift(1).rolling(3).mean().reindex(y_te.index)
+        fold_model.fit(X_tr, y_ratio_tr)
+        ratio_pred_fold = fold_model.predict(X_te)
+        rf_pred_fold    = pd.Series(lag1_te.values * ratio_pred_fold, index=y_te.index)   # tái tạo giá trị thực
+        base_pred_fold  = series.shift(1).rolling(3).mean().reindex(y_te.index)
 
         for name, preds in [("Baseline MA-3", base_pred_fold), ("Random Forest", rf_pred_fold)]:
             fold_metrics[name]["MAE"].append(mean_absolute_error(y_te, preds))
@@ -179,22 +193,27 @@ def run_entire_forecasting_pipeline(category_data):
         random_state=42,
         n_jobs=-1,
     )
-    model.fit(X_all, y_all)
-    X_train = X_all  # giữ tên biến để phần dưới (feature importance, forecast) không đổi
+    model.fit(X_all, y_ratio_all)
+    X_train = X_all  # giữ tên biến để phần dưới (feature importance) không đổi
 
     # 5. Dự báo đệ quy cho 3 tháng tiếp theo
+    # Model dự đoán TỶ LỆ tăng trưởng của bước kế tiếp, sau đó nhân với giá trị
+    # thực/dự báo gần nhất để ra số lượng -> không bị giới hạn ngoại suy.
     fc_dates = pd.date_range(series.index[-1] + pd.DateOffset(months=1), periods=3, freq="MS")
-    history  = list(series.values)
-    fc_vals  = []
+    history       = list(series.values)          # giá trị thực (units) để tính lag/ratio tiếp theo
+    ratio_history = list(feat["ratio"].values)    # lịch sử tỷ lệ tăng trưởng
+    fc_vals = []
     for step in range(3):
-        row = pd.DataFrame([[history[-1], history[-2], history[-3],
-                             np.mean(history[-3:]), np.std(history[-3:]),
+        row = pd.DataFrame([[ratio_history[-1], ratio_history[-2], ratio_history[-3],
+                             np.mean(ratio_history[-3:]),
                              (series.index[-1].month + step) % 12 + 1,
                              ((series.index[-1].month + step) % 12) // 3 + 1,
                              len(history) + step]], columns=X_train.columns)
-        pred = float(model.predict(row)[0])
-        fc_vals.append(int(pred))
+        ratio_pred = float(model.predict(row)[0])
+        pred = history[-1] * ratio_pred
+        fc_vals.append(int(max(1, pred)))
         history.append(pred)
+        ratio_history.append(ratio_pred)
 
     return series, results, pd.Series(fc_vals, index=fc_dates), model, X_train
 
