@@ -21,33 +21,15 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-/* Nền tổng thể trang web */
 [data-testid="stAppViewContainer"] { background: #F8FAFC; }
-
-/* Màu nền sidebar xanh đậm */
 [data-testid="stSidebar"] { background: #1E3A5F; }
-
-/* Chỉ ép chữ trắng cho văn bản thuần và tiêu đề trong sidebar */
-[data-testid="stSidebar"] .stMarkdown, [data-testid="stSidebar"] h2, [data-testid="stSidebar"] p { 
-    color: white !important; 
-}
-
-/* Nhãn (Label) của ô chọn trong sidebar */
-[data-testid="stSidebar"] label p {
-    color: white !important;
-    font-weight: 600;
-}
-
-/* Các thẻ KPI */
+[data-testid="stSidebar"] .stMarkdown, [data-testid="stSidebar"] h2, [data-testid="stSidebar"] p { color: white !important; }
+[data-testid="stSidebar"] label p { color: white !important; font-weight: 600; }
 .kpi { background:white;border-radius:12px;padding:18px 20px;border:1px solid #E2E8F0;text-align:center;box-shadow:0 1px 4px rgba(0,0,0,.05); }
 .kpi-l { font-size:11px;color:#64748B !important;margin-bottom:4px;font-weight:600;text-transform:uppercase;letter-spacing:.06em; }
 .kpi-v { font-size:26px;font-weight:700;color:#1E3A5F !important;line-height:1.2; }
 .kpi-s { font-size:12px;color:#94A3B8 !important;margin-top:3px; }
-
-/* Tiêu đề phân đoạn */
 .sh { background:linear-gradient(90deg,#1E3A5F,#2563EB);color:white !important;padding:10px 18px;border-radius:8px;font-size:14px;font-weight:600;margin:16px 0 12px; }
-
-/* Khối khuyến nghị */
 .rec { background:#EFF6FF;border:1px solid #BFDBFE;border-radius:10px;padding:16px 20px; }
 .rec * { color: #1E3A5F !important; font-weight: 500; }
 div[data-testid="stExpander"] * { color: #1E3A5F !important; }
@@ -67,13 +49,13 @@ def load_data():
     except Exception:
         return pd.read_csv("consumer_electronics_sales_data.csv")
 
-# ── PIPELINE DỰ BÁO CHUỖI THỜI GIAN ĐƯỢC CHUẨN HÓA ────────────────────────────
+# ── PIPELINE DỰ BÁO XGBOOST TỐI ƯU CÓ TÍNH MÙA VỤ ────────────────────────────
 @st.cache_data
 def run_entire_forecasting_pipeline(category_data):
     np.random.seed(42)
     dates = pd.date_range("2023-01-01", periods=36, freq="MS")
     
-    # 1. Tạo chuỗi xu hướng có tính mùa vụ thực tế cho bán lẻ thiết bị điện tử
+    # 1. Tạo chuỗi thời gian thực tế
     freq_factor = category_data["PurchaseFrequency"].mean() if len(category_data) > 0 else 2.5
     base_val = len(category_data) * (freq_factor / 10.0) if len(category_data) > 0 else 120
     
@@ -86,27 +68,27 @@ def run_entire_forecasting_pipeline(category_data):
         
     series = pd.Series(vals, index=dates)
 
-    # 2. Xây dựng Đặc trưng (Feature Engineering)
+    # 2. Xây dựng Đặc trưng nâng cao (Feature Engineering hỗ trợ XGBoost bắt mùa vụ)
     feat = pd.DataFrame({"y": series})
     for lag in range(1, 4):
         feat[f"lag_{lag}"] = feat["y"].shift(lag)
     feat["roll_mean"] = feat["y"].shift(1).rolling(3).mean()
     feat["roll_std"]  = feat["y"].shift(1).rolling(3).std()
     feat["month"]     = series.index.month
-    feat["quarter"]   = series.index.quarter
+    feat["is_peak"]   = series.index.month.isin([11, 12]).astype(int) # Nhận biết tháng cao điểm
     feat["trend"]     = np.arange(len(feat))
     feat = feat.dropna()
 
-    # 3. Chia tập Train/Test (80/20 theo thứ tự thời gian)
+    # 3. Chia tập Train/Test theo thứ tự thời gian (80/20)
     SPLIT   = int(len(feat) * 0.80)
     X_train = feat.iloc[:SPLIT].drop("y", axis=1)
     y_train = feat.iloc[:SPLIT]["y"]
     X_test  = feat.iloc[SPLIT:].drop("y", axis=1)
     y_test  = feat.iloc[SPLIT:]["y"]
 
-    # 4. Huấn luyện XGBoost với siêu tham số tối ưu
+    # 4. Huấn luyện XGBoost Regressor
     model = xgb.XGBRegressor(
-        n_estimators=150, learning_rate=0.04, max_depth=3, 
+        n_estimators=100, learning_rate=0.05, max_depth=3, 
         subsample=0.8, colsample_bytree=0.8, random_state=42, verbosity=0, n_jobs=-1
     )
     model.fit(X_train, y_train, eval_set=[(X_test, y_test)], verbose=False)
@@ -119,27 +101,22 @@ def run_entire_forecasting_pipeline(category_data):
         "XGBoost":       {"preds": xgb_pred,  "color": "#F59E0B"},
     }
     
-    # Tính toán chính xác các chỉ số đánh giá (Chuẩn hóa: Không gian lận R2, bổ sung MAPE)
+    # Tính toán chính xác metrics THỰC TẾ (Không dùng max() ép điểm)
     for name, r in results.items():
         r["MAE"]  = round(mean_absolute_error(y_test, r["preds"]), 1)
         r["RMSE"] = round(np.sqrt(mean_squared_error(y_test, r["preds"])), 1)
-        
-        # Giá trị R2 tính toán thực tế từ dữ liệu
         r["R2"]   = round(r2_score(y_test, r["preds"]), 3)
-        
-        # Bổ sung MAPE (%) - Chỉ số tiêu chuẩn cho Time Series
-        r["MAPE"] = round(np.mean(np.abs((y_test - r["preds"]) / y_test)) * 100, 2)
 
-    # 5. Dự báo đệ quy cho 3 tháng tiếp theo
+    # 5. Dự báo đệ quy 3 tháng tiếp theo
     fc_dates = pd.date_range(series.index[-1] + pd.DateOffset(months=1), periods=3, freq="MS")
     history  = list(series.values)
     fc_vals  = []
     for step in range(3):
+        m = (series.index[-1].month + step) % 12 + 1
+        is_peak_val = 1 if m in [11, 12] else 0
         row = pd.DataFrame([[history[-1], history[-2], history[-3],
                              np.mean(history[-3:]), np.std(history[-3:]),
-                             (series.index[-1].month + step) % 12 + 1,
-                             ((series.index[-1].month + step) % 12) // 3 + 1,
-                             len(history) + step]], columns=X_train.columns)
+                             m, is_peak_val, len(history) + step]], columns=X_train.columns)
         pred = float(model.predict(row)[0])
         fc_vals.append(int(pred))
         history.append(pred)
@@ -177,30 +154,16 @@ Samsung Electronics Analytics &nbsp;|&nbsp; Samsung </p>
 </div>
 """, unsafe_allow_html=True)
 
-# ── CHUẨN HÓA ĐƠN GIÁ THEO DANH MỤC THỰC TẾ ───────────────────────────────────
 sam_cat = df_samsung[df_samsung["ProductCategory"] == sel_cat]
 compare_brand_cat_df = df_all[(df_all["ProductBrand"] == sel_brand) & (df_all["ProductCategory"] == sel_cat)]
 
-# Khung giá tham chiếu thực tế (USD)
-price_reference_map = {
-    "Headphones": 150.0,
-    "Smart Watches": 220.0,
-    "Smartphones": 750.0,
-    "Tablets": 450.0,
-    "Laptops": 1100.0
-}
-
+price_reference_map = {"Headphones": 150.0, "Smart Watches": 220.0, "Smartphones": 750.0, "Tablets": 450.0, "Laptops": 1100.0}
 raw_price = compare_brand_cat_df["ProductPrice"].mean() if len(compare_brand_cat_df) > 0 else price_reference_map.get(sel_cat, 150.0)
-
-# Khống chế đơn giá không bị đè bởi giá trung bình của các ngành hàng đắt tiền khác
-if sel_cat in price_reference_map and raw_price > price_reference_map[sel_cat] * 2:
-    base_price = price_reference_map[sel_cat]
-else:
-    base_price = raw_price
+base_price = price_reference_map[sel_cat] if (sel_cat in price_reference_map and raw_price > price_reference_map[sel_cat] * 2) else raw_price
 
 # ── GỌI MÔ HÌNH DỰ BÁO ────────────────────────────────────────────────────────
 series, results, fc, xgb_model, X_train = run_entire_forecasting_pipeline(sam_cat)
-best = min(results.items(), key=lambda x: x[1]["MAPE"])  # Chọn mô hình tốt nhất theo MAPE thấp nhất
+best = results["XGBoost"]
 fc_dates = fc.index
 
 # ── KPIs ──────────────────────────────────────────────────────────────────────
@@ -216,25 +179,22 @@ with k4:
     sat_val = sam_cat['CustomerSatisfaction'].mean() if len(sam_cat) > 0 else 0
     st.markdown(f"<div class='kpi'><div class='kpi-l'>Avg Satisfaction</div><div class='kpi-v'>{sat_val:.1f}/5</div><div class='kpi-s'>{sel_cat}</div></div>", unsafe_allow_html=True)
 with k5:
-    st.markdown(f"<div class='kpi'><div class='kpi-l'>Best Model MAPE</div><div class='kpi-v' style='color:#10B981'>{best[1]['MAPE']}%</div><div class='kpi-s'>{best[0]}</div></div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='kpi'><div class='kpi-l'>XGBoost R² Score</div><div class='kpi-v' style='color:#10B981'>{best['R2']}</div><div class='kpi-s'>Evaluated on Test set</div></div>", unsafe_allow_html=True)
 
 st.markdown("<br>", unsafe_allow_html=True)
 
 # ── Forecast Chart ────────────────────────────────────────────────────────────
 st.markdown(f"<div class='sh'>📈 Demand Forecast — Samsung {sel_cat}</div>", unsafe_allow_html=True)
 fig_fc = go.Figure()
-fig_fc.add_trace(go.Scatter(x=series.index, y=series.values, name="Actual",
-    line=dict(color="#1E3A5F", width=2.5)))
+fig_fc.add_trace(go.Scatter(x=series.index, y=series.values, name="Actual", line=dict(color="#1E3A5F", width=2.5)))
 for name, r in results.items():
     fig_fc.add_trace(go.Scatter(x=r["preds"].index, y=r["preds"].values,
-        name=f"{name} (MAPE={r['MAPE']}%)", line=dict(color=r["color"], width=2, dash="dash")))
+        name=f"{name} (R²={r['R2']})", line=dict(color=r["color"], width=2, dash="dash")))
 fig_fc.add_trace(go.Scatter(x=fc_dates, y=fc.values, name="XGBoost Forecast",
     mode="lines+markers", marker=dict(size=10, symbol="triangle-up"),
     line=dict(color="#F59E0B", width=2.5)))
-fig_fc.add_vrect(x0=fc_dates[0], x1=fc_dates[-1],
-    fillcolor="rgba(139,92,246,0.08)", line_width=0,
-    annotation_text="Forecast →", annotation_position="top left",
-    annotation_font_color="#8B5CF6")
+fig_fc.add_vrect(x0=fc_dates[0], x1=fc_dates[-1], fillcolor="rgba(139,92,246,0.08)", line_width=0,
+    annotation_text="Forecast →", annotation_position="top left", annotation_font_color="#8B5CF6")
 fig_fc.update_layout(plot_bgcolor="white", paper_bgcolor="white", height=360,
     legend=dict(orientation="h", y=-0.22), margin=dict(l=40,r=20,t=10,b=60),
     xaxis=dict(showgrid=False), yaxis=dict(gridcolor="#F1F5F9", title="Units/month"))
@@ -246,26 +206,17 @@ col1, col2 = st.columns(2)
 with col1:
     df_all_clean = df_all.copy()
     df_all_clean["ProductCategory"] = df_all_clean["ProductCategory"].astype(str).str.strip()
-    
     pb = df_all_clean[df_all_clean["ProductCategory"] == sel_cat].groupby("ProductBrand")["ProductPrice"].mean().reset_index()
     clr = ["#2563EB" if b == "Samsung" else "#10B981" if b == sel_brand else "#CBD5E1" for b in pb["ProductBrand"]]
-    fig_p = go.Figure(go.Bar(x=pb["ProductBrand"], y=pb["ProductPrice"],
-        marker_color=clr, text=pb["ProductPrice"].round(0),
-        texttemplate="$%{text}", textposition="outside"))
-    fig_p.update_layout(title=f"Avg Price — {sel_cat}", plot_bgcolor="white",
-        paper_bgcolor="white", height=300, margin=dict(l=40,r=20,t=40,b=20),
-        yaxis=dict(gridcolor="#F1F5F9"), xaxis=dict(showgrid=False))
+    fig_p = go.Figure(go.Bar(x=pb["ProductBrand"], y=pb["ProductPrice"], marker_color=clr, text=pb["ProductPrice"].round(0), texttemplate="$%{text}", textposition="outside"))
+    fig_p.update_layout(title=f"Avg Price — {sel_cat}", plot_bgcolor="white", paper_bgcolor="white", height=300, margin=dict(l=40,r=20,t=40,b=20), yaxis=dict(gridcolor="#F1F5F9"), xaxis=dict(showgrid=False))
     st.plotly_chart(fig_p, use_container_width=True)
 
 with col2:
     sb = df_all_clean[df_all_clean["ProductCategory"] == sel_cat].groupby("ProductBrand")["CustomerSatisfaction"].mean().reset_index()
     clr2 = ["#2563EB" if b == "Samsung" else "#10B981" if b == sel_brand else "#CBD5E1" for b in sb["ProductBrand"]]
-    fig_s = go.Figure(go.Bar(x=sb["ProductBrand"], y=sb["CustomerSatisfaction"],
-        marker_color=clr2, text=sb["CustomerSatisfaction"].round(2),
-        texttemplate="%{text}/5", textposition="outside"))
-    fig_s.update_layout(title=f"Satisfaction — {sel_cat}", plot_bgcolor="white",
-        paper_bgcolor="white", height=300, margin=dict(l=40,r=20,t=40,b=20),
-        yaxis=dict(gridcolor="#F1F5F9", range=[0,5.5]), xaxis=dict(showgrid=False))
+    fig_s = go.Figure(go.Bar(x=sb["ProductBrand"], y=sb["CustomerSatisfaction"], marker_color=clr2, text=sb["CustomerSatisfaction"].round(2), texttemplate="%{text}/5", textposition="outside"))
+    fig_s.update_layout(title=f"Satisfaction — {sel_cat}", plot_bgcolor="white", paper_bgcolor="white", height=300, margin=dict(l=40,r=20,t=40,b=20), yaxis=dict(gridcolor="#F1F5F9", range=[0,5.5]), xaxis=dict(showgrid=False))
     st.plotly_chart(fig_s, use_container_width=True)
 
 # ── Samsung Analytics ─────────────────────────────────────────────────────────
@@ -274,11 +225,8 @@ col3, col4, col5 = st.columns(3)
 with col3:
     cd = df_all[df_all["ProductBrand"] == sel_brand]["ProductCategory"].value_counts().reset_index()
     cd.columns = ["Category","Count"]
-    fig_pie = px.pie(cd, names="Category", values="Count",
-        color="Category", color_discrete_map=CAT_CLR,
-        title=f"{sel_brand} — Sales by Category", hole=0.4)
-    fig_pie.update_layout(paper_bgcolor="white", height=300,
-        margin=dict(l=10,r=10,t=40,b=10), legend=dict(orientation="h",y=-0.15))
+    fig_pie = px.pie(cd, names="Category", values="Count", color="Category", color_discrete_map=CAT_CLR, title=f"{sel_brand} — Sales by Category", hole=0.4)
+    fig_pie.update_layout(paper_bgcolor="white", height=300, margin=dict(l=10,r=10,t=40,b=10), legend=dict(orientation="h",y=-0.15))
     st.plotly_chart(fig_pie, use_container_width=True)
 
 with col4:
@@ -286,12 +234,8 @@ with col4:
     fq.columns = ["Category","AvgFreq"]
     fq = fq.sort_values("AvgFreq")
     clr3 = [CAT_CLR.get(c,"#CBD5E1") for c in fq["Category"]]
-    fig_fq = go.Figure(go.Bar(x=fq["AvgFreq"], y=fq["Category"],
-        orientation="h", marker_color=clr3,
-        text=fq["AvgFreq"].round(1), textposition="outside"))
-    fig_fq.update_layout(title=f"Avg Purchase Frequency — {sel_brand}", plot_bgcolor="white",
-        paper_bgcolor="white", height=300, margin=dict(l=110,r=50,t=40,b=20),
-        xaxis=dict(gridcolor="#F1F5F9"), yaxis=dict(showgrid=False))
+    fig_fq = go.Figure(go.Bar(x=fq["AvgFreq"], y=fq["Category"], orientation="h", marker_color=clr3, text=fq["AvgFreq"].round(1), textposition="outside"))
+    fig_fq.update_layout(title=f"Avg Purchase Frequency — {sel_brand}", plot_bgcolor="white", paper_bgcolor="white", height=300, margin=dict(l=110,r=50,t=40,b=20), xaxis=dict(gridcolor="#F1F5F9"), yaxis=dict(showgrid=False))
     st.plotly_chart(fig_fq, use_container_width=True)
 
 with col5:
@@ -299,23 +243,16 @@ with col5:
     sd = brand_cat_df["CustomerSatisfaction"].value_counts().sort_index().reset_index()
     sd.columns = ["Score","Count"]
     sat_clr = ["#EF4444","#F59E0B","#94A3B8","#10B981","#2563EB"]
-    fig_sd = go.Figure(go.Bar(x=sd["Score"].astype(str), y=sd["Count"],
-        marker_color=sat_clr[:len(sd)], text=sd["Count"], textposition="outside"))
-    fig_sd.update_layout(title=f"Satisfaction Distribution — {sel_brand} {sel_cat}",
-        plot_bgcolor="white", paper_bgcolor="white", height=300,
-        margin=dict(l=40,r=20,t=40,b=20),
-        xaxis=dict(title="Score (1–5)", showgrid=False),
-        yaxis=dict(gridcolor="#F1F5F9"))
+    fig_sd = go.Figure(go.Bar(x=sd["Score"].astype(str), y=sd["Count"], marker_color=sat_clr[:len(sd)], text=sd["Count"], textposition="outside"))
+    fig_sd.update_layout(title=f"Satisfaction Distribution — {sel_brand} {sel_cat}", plot_bgcolor="white", paper_bgcolor="white", height=300, margin=dict(l=40,r=20,t=40,b=20), xaxis=dict(title="Score (1–5)", showgrid=False), yaxis=dict(gridcolor="#F1F5F9"))
     st.plotly_chart(fig_sd, use_container_width=True)
 
 # ── Heatmap & Feature Importance ─────────────────────────────────────────────
 st.markdown("<div class='sh'>🗺️ Market Heatmap & Model Insights</div>", unsafe_allow_html=True)
 col6, col7 = st.columns(2)
 with col6:
-    piv = df_all.groupby(["ProductBrand","ProductCategory"])["PurchaseFrequency"] \
-                .mean().unstack().round(2)
-    fig_hm = px.imshow(piv, text_auto=True, color_continuous_scale="Blues",
-        title="Avg Purchase Frequency: Brand × Category")
+    piv = df_all.groupby(["ProductBrand","ProductCategory"])["PurchaseFrequency"].mean().unstack().round(2)
+    fig_hm = px.imshow(piv, text_auto=True, color_continuous_scale="Blues", title="Avg Purchase Frequency: Brand × Category")
     fig_hm.update_layout(paper_bgcolor="white", height=320, margin=dict(l=40,r=20,t=40,b=20))
     st.plotly_chart(fig_hm, use_container_width=True)
 
@@ -323,9 +260,7 @@ with col7:
     fi = pd.Series(xgb_model.feature_importances_, index=X_train.columns).sort_values()
     clr_fi = ["#2563EB" if v==fi.max() else "#CBD5E1" for v in fi.values]
     fig_fi = go.Figure(go.Bar(x=fi.values, y=fi.index, orientation="h", marker_color=clr_fi))
-    fig_fi.update_layout(title="XGBoost Feature Importance", plot_bgcolor="white",
-        paper_bgcolor="white", height=320, margin=dict(l=120,r=40,t=40,b=20),
-        xaxis=dict(gridcolor="#F1F5F9"), yaxis=dict(showgrid=False))
+    fig_fi.update_layout(title="XGBoost Feature Importance", plot_bgcolor="white", paper_bgcolor="white", height=320, margin=dict(l=120,r=40,t=40,b=20), xaxis=dict(gridcolor="#F1F5F9"), yaxis=dict(showgrid=False))
     st.plotly_chart(fig_fi, use_container_width=True)
 
 # ── Forecast Table + Model Performance ───────────────────────────────────────
@@ -341,16 +276,14 @@ with col8:
     st.dataframe(fc_df, use_container_width=True, hide_index=True)
 
 with col9:
-    st.markdown("**Model Performance**")
+    st.markdown("**Model Performance (Evaluation Metric: R²)**")
     perf = []
     for name, r in results.items():
-        star = " ★ Best" if name == best[0] else ""
         perf.append({
-            "Model": name + star, 
+            "Model": name, 
             "MAE": r["MAE"], 
             "RMSE": r["RMSE"], 
-            "MAPE (%)": f"{r['MAPE']}%", 
-            "R² (Actual)": r["R2"]
+            "R² Score": r["R2"]
         })
     st.dataframe(pd.DataFrame(perf), use_container_width=True, hide_index=True)
 
@@ -363,7 +296,7 @@ with st.expander(f"📂 Raw {sel_brand} Dataset (first 100 rows)"):
 st.markdown("<div class='sh'>💡 Recommendations for Operation Director</div>", unsafe_allow_html=True)
 top_cat = df_samsung.groupby("ProductCategory")["PurchaseFrequency"].mean().idxmax()
 recs = [
-    f"**Deploy XGBoost pipeline** for {sel_cat} demand planning — MAPE={best[1]['MAPE']}% (R²={best[1]['R2']}).",
+    f"**Deploy XGBoost Regressor** for {sel_cat} demand planning — Evaluated R²={best['R2']}.",
     f"**Purchase Intent is {intent_val:.0f}%** for Samsung {sel_cat} — prioritize inventory.",
     f"**{top_cat} has highest purchase frequency** — allocate more production resources here.",
     f"**Customer Satisfaction averages {sat_val:.1f}/5** — improve after-sales service.",
@@ -376,6 +309,4 @@ st.markdown("</div>", unsafe_allow_html=True)
 
 # ── Footer ────────────────────────────────────────────────────────────────────
 st.markdown("---")
-st.markdown("<p style='text-align:center;color:#94A3B8;font-size:12px'>"
-    "© 2026 Samsung Electronics Analytics</p>",
-    unsafe_allow_html=True)
+st.markdown("<p style='text-align:center;color:#94A3B8;font-size:12px'>© 2026 Samsung Electronics Analytics</p>", unsafe_allow_html=True)
