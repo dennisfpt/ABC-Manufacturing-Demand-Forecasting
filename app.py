@@ -184,8 +184,10 @@ def run_entire_forecasting_pipeline(category_data):
             "color": colors[name],
             "MAE":  round(float(np.mean(fold_metrics[name]["MAE"])), 1),
             "RMSE": round(float(np.mean(fold_metrics[name]["RMSE"])), 1),
-            "R2":   max(0.0, r2_raw),  # giới hạn hiển thị tối thiểu = 0 (dễ trình bày/báo cáo)
-            "R2_raw": r2_raw,          # giá trị R² thật (có thể âm), dùng để chọn model tốt nhất cho đúng
+            "R2":   r2_raw,  # Hiển thị giá trị R² THẬT (kể cả âm) - phản ánh đúng thực tế
+                             # đánh giá model, không "làm đẹp" số liệu. R² âm ở Baseline là
+                             # kết quả khoa học hợp lệ, chứng minh XGBoost thực sự học được
+                             # pattern chứ không phải chỉ đoán ngẫu nhiên tốt hơn baseline.
         }
 
     # 4. Huấn luyện mô hình CUỐI CÙNG trên TOÀN BỘ dữ liệu để dùng cho dự báo tương lai
@@ -269,7 +271,7 @@ base_price = compare_brand_cat_df["ProductPrice"].mean() if len(compare_brand_ca
 
 # GỌI HÀM PIPELINE VỚI THAM SỐ DỮ LIỆU ĐỘNG THỰC TẾ CỦA SAMSUNG
 series, results, fc, xgb_model, X_train = run_entire_forecasting_pipeline(sam_cat)
-best = max(results.items(), key=lambda x: x[1]["R2_raw"])
+best = max(results.items(), key=lambda x: x[1]["R2"])
 fc_dates = fc.index
 
 # ── KPIs ──────────────────────────────────────────────────────────────────────
@@ -418,7 +420,7 @@ with col9:
         star = " ★ Best" if name == best[0] else ""
         perf.append({"Model": name+star, "MAE": r["MAE"], "RMSE": r["RMSE"], "R²": r["R2"]})
     st.dataframe(pd.DataFrame(perf), use_container_width=True, hide_index=True)
-    st.caption("ℹ️ R² được giới hạn tối thiểu = 0 để dễ đọc trên báo cáo (R² âm về bản chất nghĩa là mô hình đó tệ hơn việc lấy trung bình đơn giản — quy về 0 để thể hiện 'không có khả năng giải thích biến thiên dữ liệu', thay vì hiển thị số âm gây khó hiểu).")
+    st.caption("ℹ️ R² thể hiện đúng kết quả thực tế của mô hình (có thể âm). R² âm ở Baseline MA-3 là điều hợp lý về mặt thống kê: nó cho thấy phương pháp trung bình đơn giản dự đoán tệ hơn cả việc lấy trung bình toàn tập kiểm định — qua đó chứng minh XGBoost thực sự học được quy luật trong dữ liệu, không phải chỉ 'ăn may'. Chỉ số là trung bình qua nhiều fold cross-validation theo thời gian.")
 
 # ── Raw Data ─────────────────────────────────────────────────────────────────
 with st.expander(f"📂 Raw {sel_brand} Dataset (first 100 rows)"):
