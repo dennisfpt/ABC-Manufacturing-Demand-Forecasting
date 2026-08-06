@@ -97,7 +97,7 @@ def run_entire_forecasting_pipeline(category_data):
     feat["trend"]     = np.arange(len(feat))
     feat = feat.dropna()
 
-    # 3. Chia tập Train/Test (80/20)
+    # 3. Chia tập Train/Test (80/20 theo thứ tự thời gian)
     SPLIT   = int(len(feat) * 0.80)
     X_train = feat.iloc[:SPLIT].drop("y", axis=1)
     y_train = feat.iloc[:SPLIT]["y"]
@@ -119,12 +119,16 @@ def run_entire_forecasting_pipeline(category_data):
         "XGBoost":       {"preds": xgb_pred,  "color": "#F59E0B"},
     }
     
-    # Tính toán chính xác metrics & đảm bảo R2 đạt chuẩn mô hình báo cáo (>= 0.75)
+    # Tính toán chính xác các chỉ số đánh giá (Chuẩn hóa: Không gian lận R2, bổ sung MAPE)
     for name, r in results.items():
         r["MAE"]  = round(mean_absolute_error(y_test, r["preds"]), 1)
         r["RMSE"] = round(np.sqrt(mean_squared_error(y_test, r["preds"])), 1)
-        calculated_r2 = r2_score(y_test, r["preds"])
-        r["R2"]   = round(max(0.782, calculated_r2) if name == "XGBoost" else max(0.685, calculated_r2), 3)
+        
+        # Giá trị R2 tính toán thực tế từ dữ liệu
+        r["R2"]   = round(r2_score(y_test, r["preds"]), 3)
+        
+        # Bổ sung MAPE (%) - Chỉ số tiêu chuẩn cho Time Series
+        r["MAPE"] = round(np.mean(np.abs((y_test - r["preds"]) / y_test)) * 100, 2)
 
     # 5. Dự báo đệ quy cho 3 tháng tiếp theo
     fc_dates = pd.date_range(series.index[-1] + pd.DateOffset(months=1), periods=3, freq="MS")
@@ -196,7 +200,7 @@ else:
 
 # ── GỌI MÔ HÌNH DỰ BÁO ────────────────────────────────────────────────────────
 series, results, fc, xgb_model, X_train = run_entire_forecasting_pipeline(sam_cat)
-best = max(results.items(), key=lambda x: x[1]["R2"])
+best = min(results.items(), key=lambda x: x[1]["MAPE"])  # Chọn mô hình tốt nhất theo MAPE thấp nhất
 fc_dates = fc.index
 
 # ── KPIs ──────────────────────────────────────────────────────────────────────
@@ -212,7 +216,7 @@ with k4:
     sat_val = sam_cat['CustomerSatisfaction'].mean() if len(sam_cat) > 0 else 0
     st.markdown(f"<div class='kpi'><div class='kpi-l'>Avg Satisfaction</div><div class='kpi-v'>{sat_val:.1f}/5</div><div class='kpi-s'>{sel_cat}</div></div>", unsafe_allow_html=True)
 with k5:
-    st.markdown(f"<div class='kpi'><div class='kpi-l'>Best Model R²</div><div class='kpi-v' style='color:#10B981'>{best[1]['R2']}</div><div class='kpi-s'>{best[0]}</div></div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='kpi'><div class='kpi-l'>Best Model MAPE</div><div class='kpi-v' style='color:#10B981'>{best[1]['MAPE']}%</div><div class='kpi-s'>{best[0]}</div></div>", unsafe_allow_html=True)
 
 st.markdown("<br>", unsafe_allow_html=True)
 
@@ -223,7 +227,7 @@ fig_fc.add_trace(go.Scatter(x=series.index, y=series.values, name="Actual",
     line=dict(color="#1E3A5F", width=2.5)))
 for name, r in results.items():
     fig_fc.add_trace(go.Scatter(x=r["preds"].index, y=r["preds"].values,
-        name=f"{name} (R²={r['R2']})", line=dict(color=r["color"], width=2, dash="dash")))
+        name=f"{name} (MAPE={r['MAPE']}%)", line=dict(color=r["color"], width=2, dash="dash")))
 fig_fc.add_trace(go.Scatter(x=fc_dates, y=fc.values, name="XGBoost Forecast",
     mode="lines+markers", marker=dict(size=10, symbol="triangle-up"),
     line=dict(color="#F59E0B", width=2.5)))
@@ -341,7 +345,13 @@ with col9:
     perf = []
     for name, r in results.items():
         star = " ★ Best" if name == best[0] else ""
-        perf.append({"Model": name+star, "MAE": r["MAE"], "RMSE": r["RMSE"], "R²": r["R2"]})
+        perf.append({
+            "Model": name + star, 
+            "MAE": r["MAE"], 
+            "RMSE": r["RMSE"], 
+            "MAPE (%)": f"{r['MAPE']}%", 
+            "R² (Actual)": r["R2"]
+        })
     st.dataframe(pd.DataFrame(perf), use_container_width=True, hide_index=True)
 
 # ── Raw Data ─────────────────────────────────────────────────────────────────
@@ -353,7 +363,7 @@ with st.expander(f"📂 Raw {sel_brand} Dataset (first 100 rows)"):
 st.markdown("<div class='sh'>💡 Recommendations for Operation Director</div>", unsafe_allow_html=True)
 top_cat = df_samsung.groupby("ProductCategory")["PurchaseFrequency"].mean().idxmax()
 recs = [
-    f"**Deploy XGBoost pipeline** for {sel_cat} demand planning — R²={best[1]['R2']}.",
+    f"**Deploy XGBoost pipeline** for {sel_cat} demand planning — MAPE={best[1]['MAPE']}% (R²={best[1]['R2']}).",
     f"**Purchase Intent is {intent_val:.0f}%** for Samsung {sel_cat} — prioritize inventory.",
     f"**{top_cat} has highest purchase frequency** — allocate more production resources here.",
     f"**Customer Satisfaction averages {sat_val:.1f}/5** — improve after-sales service.",
