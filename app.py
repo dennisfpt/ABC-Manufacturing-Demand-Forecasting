@@ -117,8 +117,15 @@ def run_entire_forecasting_pipeline(category_data):
     # Với chỉ ~30 điểm dữ liệu, đánh giá 1 lần trên ~6 điểm test rất bất ổn định.
     # TimeSeriesSplit tạo nhiều fold theo đúng thứ tự thời gian (không leak tương lai
     # vào quá khứ), sau đó lấy TRUNG BÌNH các chỉ số qua các fold -> ổn định hơn nhiều.
-    n_splits = 4 if len(X_all) >= 12 else 2
-    tscv = TimeSeriesSplit(n_splits=n_splits, test_size=3)
+    # test_size lớn hơn (5 điểm/fold thay vì 3) giúp mỗi fold có đủ dữ liệu để
+    # R² không bị "nhảy âm" chỉ vì 1-2 điểm dự đoán lệch trong fold quá nhỏ.
+    if len(X_all) >= 20:
+        n_splits, test_size = 3, 5
+    elif len(X_all) >= 12:
+        n_splits, test_size = 2, 4
+    else:
+        n_splits, test_size = 2, 2
+    tscv = TimeSeriesSplit(n_splits=n_splits, test_size=test_size)
 
     fold_metrics = {
         "Baseline MA-3": {"MAE": [], "RMSE": [], "R2": []},
@@ -374,6 +381,7 @@ with col9:
         star = " ★ Best" if name == best[0] else ""
         perf.append({"Model": name+star, "MAE": r["MAE"], "RMSE": r["RMSE"], "R²": r["R2"]})
     st.dataframe(pd.DataFrame(perf), use_container_width=True, hide_index=True)
+    st.caption("ℹ️ R² có thể âm nếu mô hình dự đoán tệ hơn việc lấy trung bình đơn giản trên tập kiểm định — khác với MAE/RMSE luôn ≥ 0. Chỉ số ở đây là trung bình qua nhiều fold cross-validation theo thời gian.")
 
 # ── Raw Data ─────────────────────────────────────────────────────────────────
 with st.expander(f"📂 Raw {sel_brand} Dataset (first 100 rows)"):
