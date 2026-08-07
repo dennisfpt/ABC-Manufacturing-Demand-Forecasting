@@ -357,4 +357,4 @@ st.markdown("---")
 st.markdown("<p style='text-align:center;color:#94A3B8;font-size:12px'>"
     "© 2026 Samsung Electronics Analytics</p>",
     unsafe_allow_html=True)
-code của nó nè 
+
