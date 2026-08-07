@@ -8,7 +8,7 @@ import plotly.express as px
 import streamlit as st
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 import xgboost as xgb
-import requests
+import requests  
 import io
 
 # ── Page Config ────────────────────────────────────────────────────────────────
@@ -357,4 +357,3 @@ st.markdown("---")
 st.markdown("<p style='text-align:center;color:#94A3B8;font-size:12px'>"
     "© 2026 Samsung Electronics Analytics</p>",
     unsafe_allow_html=True)
-
