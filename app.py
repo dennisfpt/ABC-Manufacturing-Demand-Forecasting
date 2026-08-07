@@ -8,7 +8,7 @@ import plotly.express as px
 import streamlit as st
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 import xgboost as xgb
-import requests  
+import requests  
 import io
 
 # ── Page Config ────────────────────────────────────────────────────────────────
